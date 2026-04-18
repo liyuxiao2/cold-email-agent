@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cold Email Dashboard</title>
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            max-width: 1100px;
+            margin: 2rem auto;
+            padding: 0 1.5rem;
+            color: #1a202c;
+            background: #f7fafc;
+        }
+        h1 { font-size: 1.5rem; margin-bottom: 1.5rem; }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            background: white;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        th {
+            background: #edf2f7;
+            padding: 0.75rem 1rem;
+            text-align: left;
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: #4a5568;
+        }
+        td {
+            padding: 1rem;
+            border-top: 1px solid #e2e8f0;
+            vertical-align: top;
+        }
+        .company { font-weight: 600; }
+        .meta { font-size: 0.8rem; color: #718096; margin-top: 0.2rem; }
+        .subject { font-weight: 600; font-size: 0.9rem; margin-bottom: 0.4rem; }
+        .body-text {
+            font-size: 0.85rem;
+            color: #4a5568;
+            white-space: pre-wrap;
+            line-height: 1.5;
+            max-width: 380px;
+        }
+        .actions { display: flex; gap: 0.5rem; }
+        form { margin: 0; }
+        button {
+            padding: 0.4rem 0.9rem;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 0.85rem;
+            font-weight: 500;
+        }
+        .approve { background: #48bb78; color: white; }
+        .approve:hover { background: #38a169; }
+        .reject { background: #fc8181; color: white; }
+        .reject:hover { background: #f56565; }
+        .regenerate { background: #bee3f8; color: #2b6cb0; }
+        .regenerate:hover { background: #90cdf4; }
+        .empty {
+            text-align: center;
+            padding: 4rem;
+            color: #a0aec0;
+            font-size: 0.95rem;
+            background: white;
+            border-radius: 8px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Cold Email Dashboard</h1>
+    {% if rows %}
+    <table>
+        <thead>
+            <tr>
+                <th>Company</th>
+                <th>Founder</th>
+                <th>Draft</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in rows %}
+            <tr>
+                <td>
+                    <div class="company">{{ row.lead.company_name }}</div>
+                    <div class="meta">
+                        {{ row.lead.funding_stage or "—" }}
+                        {% if row.lead.headcount %} · {{ row.lead.headcount }} people{% endif %}
+                    </div>
+                </td>
+                <td>
+                    <div>{{ row.lead.founder_name or "—" }}</div>
+                    <div class="meta">{{ row.lead.founder_email or "" }}</div>
+                </td>
+                <td>
+                    <div class="subject">{{ row.draft.subject_line }}</div>
+                    <div class="body-text">{{ row.draft.body }}</div>
+                </td>
+                <td>
+                    <div class="actions">
+                        <form method="post" action="/leads/{{ row.lead.id }}/approve">
+                            <button type="submit" class="approve">Approve</button>
+                        </form>
+                        <form method="post" action="/leads/{{ row.lead.id }}/reject">
+                            <button type="submit" class="reject">Reject</button>
+                        </form>
+                        <form method="post" action="/leads/{{ row.lead.id }}/regenerate">
+                            <button type="submit" class="regenerate">Regenerate</button>
+                        </form>
+                    </div>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <div class="empty">No leads awaiting review. Run the discovery task to get started.</div>
+    {% endif %}
+</body>
+</html>

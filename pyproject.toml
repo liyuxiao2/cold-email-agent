@@ -17,6 +17,7 @@ dependencies = [
     "jinja2>=3.1",
     "python-dotenv>=1.0",
     "beautifulsoup4>=4.12",
+    "python-multipart>=0.0.26",
 ]
 
 [dependency-groups]
