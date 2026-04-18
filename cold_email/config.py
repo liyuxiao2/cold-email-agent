@@ -22,8 +22,8 @@ class Settings(BaseSettings):
     instantly_api_key: str = ""
     instantly_campaign_id: str = ""
 
-    discovery_funding_stages: list[str] = ["seed", "series_a"]
-    discovery_industries: list[str] = ["fintech", "financial services"]
+    discovery_funding_stages: list[str] = ["seed", "series_a", "series_b", "series_c", "FAANG", "Public"]
+    discovery_industries: list[str] = ["fintech", "financial services", "Dev tools", "saas"]
     discovery_headcount_max: int = 150
     discovery_leads_per_run: int = 20
 
