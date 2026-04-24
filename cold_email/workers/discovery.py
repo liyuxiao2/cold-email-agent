@@ -32,7 +32,8 @@ def discovery_task(self) -> dict:
     fetched_leads = fetch_apollo_candidates()  
     
     for lead in fetched_leads:
-      research_task.delay(str(lead.id))
+      # TODO: Persist lead to DB and use the local UUID
+      research_task.delay(str(lead["id"]))
 
     return {"fetched": len(fetched_leads)}
 
