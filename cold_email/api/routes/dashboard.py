@@ -1,12 +1,13 @@
 import pathlib
+
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from cold_email.database import get_async_session, Lead, Draft
+from cold_email.database import Lead, get_async_session
 
 TEMPLATES_DIR = pathlib.Path(__file__).parent.parent.parent / "templates"
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
@@ -51,6 +52,7 @@ async def approve_lead(
         lead.status = "approved"
         await session.commit()
         from cold_email.workers.logistics import logistics_task
+
         logistics_task.delay(lead_id)
     return RedirectResponse(url="/", status_code=303)
 
@@ -80,5 +82,6 @@ async def regenerate_lead(
         lead.status = "researched"
         await session.commit()
         from cold_email.workers.drafting import drafting_task
+
         drafting_task.delay(lead_id)
     return RedirectResponse(url="/", status_code=303)

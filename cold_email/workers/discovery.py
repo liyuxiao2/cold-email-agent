@@ -1,13 +1,15 @@
 import logging
-from celery import shared_task
-from cold_email.config import settings
-from cold_email.celery_app import app as celery_app  # noqa: F401 – ensures broker is configured
-from cold_email.workers.research import research_task
-from firecrawl import Firecrawl
-from cold_email.database import SyncSessionLocal, Lead
 
+from celery import shared_task
+from firecrawl import Firecrawl
+
+from cold_email.celery_app import app as celery_app  # noqa: F401 – ensures broker is configured
+from cold_email.config import settings
+from cold_email.database import Lead, SyncSessionLocal
+from cold_email.workers.research import research_task
 
 logger = logging.getLogger(__name__)
+
 
 def extract_leads(urls: list[str], limit: int = 20) -> list[dict]:
     """
@@ -29,12 +31,11 @@ def extract_leads(urls: list[str], limit: int = 20) -> list[dict]:
                         "founder_email": {"type": "string"},
                         "linkedin_url": {"type": "string"},
                     },
-                    "required": ["company_name"]
-                }
+                    "required": ["company_name"],
+                },
             }
-        }
+        },
     }
-
 
     app = Firecrawl(api_key=settings.firecrawl_api_key)
     data = app.extract(
@@ -61,7 +62,7 @@ def discovery_task() -> dict:
     """
     fetched_leads = extract_leads(settings.discovery_urls, limit=settings.discovery_leads_per_run)
     new_lead_ids = []
-    
+
     with SyncSessionLocal() as session:
         existing = session.query(Lead.company_name).all()
         existing_names = {row[0] for row in existing}
@@ -80,7 +81,7 @@ def discovery_task() -> dict:
                 session.flush()
                 new_lead_ids.append(str(new_lead.id))
         session.commit()
-        
+
     for lead_id in new_lead_ids:
         research_task.delay(lead_id)
 

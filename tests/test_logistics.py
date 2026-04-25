@@ -1,4 +1,5 @@
 import pytest
+
 from cold_email.workers.logistics import logistics_task
 
 FAKE_UUID = "00000000-0000-0000-0000-000000000000"
