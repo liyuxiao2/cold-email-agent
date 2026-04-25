@@ -35,8 +35,9 @@ async def dashboard_index(
             rows.append({"lead": lead, "draft": draft})
 
     return templates.TemplateResponse(
-        "dashboard.html",
-        {"request": request, "rows": rows},
+        request=request,
+        name="dashboard.html",
+        context={"rows": rows},
     )
 
 

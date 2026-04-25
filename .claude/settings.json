@@ -2,7 +2,9 @@
   "permissions": {
     "allow": [
       "Bash(/Users/liyu.xiao/Documents/GitHub/cold-email-agent/.venv/bin/python -c ' *)",
-      "Bash(uv add *)"
+      "Bash(uv add *)",
+      "WebFetch(domain:apify.com)",
+      "WebFetch(domain:startups.gallery)"
     ]
   }
 }
