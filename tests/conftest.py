@@ -1,8 +1,8 @@
 import pytest_asyncio
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from cold_email.database import Base
 from cold_email.config import settings
+from cold_email.database import Base
 
 TEST_DB_URL = settings.database_url.replace("/cold_email", "/cold_email_test")
 

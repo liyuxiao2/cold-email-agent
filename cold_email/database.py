@@ -1,10 +1,9 @@
 import uuid
-from sqlalchemy import Column, String, Integer, Text, DateTime, ForeignKey, func
-from sqlalchemy.dialects.postgresql import UUID, JSONB
-from sqlalchemy.orm import DeclarativeBase, relationship
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
+
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text, create_engine, func
+from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.orm import DeclarativeBase, relationship, sessionmaker
 
 from cold_email.config import settings
 

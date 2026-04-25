@@ -1,9 +1,8 @@
 import logging
+
 from celery import shared_task
 
 logger = logging.getLogger(__name__)
-
-from cold_email.prompts.extraction import EXTRACTION_TOOL, build_extraction_messages
 
 
 @shared_task(
