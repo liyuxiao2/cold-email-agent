@@ -44,5 +44,8 @@ select = [
     "UP",  # pyupgrade
     "B",   # flake8-bugbear
     "SIM", # flake8-simplify
+    "S",   # flake8-bandit
+    "ASYNC", # flake8-async
+    "PTH", # flake8-use-pathlib
 ]
 ignore = ["E501", "B008"]  # E501: formatter handles line length; B008: FastAPI Depends() pattern
