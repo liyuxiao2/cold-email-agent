@@ -2,7 +2,7 @@
 
 ## Project Purpose
 
-Autonomous cold email pipeline: discover early-stage fintech startups via Apollo.io, research each company with Firecrawl + Claude, draft personalized outreach, hold for human review, then schedule delivery via Instantly.io.
+Autonomous cold email pipeline: scrape early-stage fintech startups from [startups.gallery](https://startups.gallery), research each company with Firecrawl + Claude (including enriching founder contact info), draft personalized outreach, hold for human review, then schedule delivery via Instantly.io.
 
 The explicit goal of this project is **learning**. Liyu is building this to understand async Python, Celery task queues, LLM tool use, and external API orchestration — not just to ship something that works.
 
@@ -49,11 +49,12 @@ Do not explain things Liyu already knows (Python basics, REST APIs, git). Do exp
 Celery Beat (Monday 8am)
     │
     ▼
-discovery_task ──▶ Apollo.io
-    │  (inserts leads, status=found)
+discovery_task ──▶ startups.gallery (scraped via Firecrawl)
+    │  (inserts leads with company_name, company_url, funding_stage; status=found)
     │
-    └──▶ research_task ──▶ Firecrawl + Claude (extraction)
-              │  (status=researched)
+    └──▶ research_task ──▶ Firecrawl + Claude + Hunter.io fallback
+              │  (scrapes /about /team, enriches founder_name/email,
+              │   extracts tech_stack + hook; status=researched)
               │
               └──▶ drafting_task ──▶ Claude (email generation)
                         │  (status=drafted)
@@ -68,6 +69,8 @@ discovery_task ──▶ Apollo.io
 ```
 
 Workers never talk to each other directly. All state lives in Postgres; all task dispatch goes through Redis.
+
+**Note on contact enrichment:** Since startups.gallery doesn't expose founder info, `leads` are inserted by discovery with `founder_name` and `founder_email` as NULL. The research worker is responsible for filling those in (scrape the company's team/about page → regex email pattern → fall back to Hunter.io) before doing the hook extraction. The state machine stays the same — enrichment is folded into `research_task` rather than being its own status.
 
 ---
 
@@ -85,8 +88,8 @@ cold-email-agent/
 │   ├── celery_app.py            # Celery app + Beat schedule
 │   │
 │   ├── workers/
-│   │   ├── discovery.py         # Apollo.io integration
-│   │   ├── research.py          # Firecrawl + Claude extraction
+│   │   ├── discovery.py         # startups.gallery scrape via Firecrawl
+│   │   ├── research.py          # Firecrawl + Claude extraction + Hunter.io enrichment
 │   │   ├── drafting.py          # Claude email generation
 │   │   └── logistics.py         # Instantly.io sequencing
 │   │
@@ -169,8 +172,9 @@ CREATE TABLE drafts (
 
 External APIs:
 
-- [Apollo.io API](https://apolloio.github.io/apollo-api-docs/) — lead sourcing
-- [Firecrawl API](https://docs.firecrawl.dev/api-reference/introduction) — web scraping
+- [startups.gallery](https://startups.gallery) — curated early-stage startup directory (no public API; scraped via Firecrawl)
+- [Firecrawl API](https://docs.firecrawl.dev/api-reference/introduction) — web scraping (discovery source + per-company research)
+- [Hunter.io API](https://hunter.io/api-documentation/v2) — email finder fallback when pattern-matching from team pages fails
 - [Instantly.io API](https://developer.instantly.ai/) — email sequencing
 
 ---
