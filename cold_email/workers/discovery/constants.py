@@ -14,7 +14,6 @@ LEAD_EXTRACT_SCHEMA = {
                 "properties": {
                     "company_name": {"type": "string"},
                     "funding_stage": {"type": "string"},
-                    "company_url": {"type": "string"},
                     "founder_name": {"type": "string"},
                     "founder_email": {"type": "string"},
                     "linkedin_url": {"type": "string"},

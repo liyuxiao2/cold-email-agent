@@ -18,6 +18,8 @@ dependencies = [
     "python-dotenv>=1.0",
     "beautifulsoup4>=4.12",
     "python-multipart>=0.0.26",
+    "google-genai>=1.0",
+    "requests>=2.31",
 ]
 
 [dependency-groups]
@@ -48,4 +50,4 @@ select = [
     "ASYNC", # flake8-async
     "PTH", # flake8-use-pathlib
 ]
-ignore = ["E501", "B008"]  # E501: formatter handles line length; B008: FastAPI Depends() pattern
+ignore = ["E501", "B008", "S101"]  # E501: formatter handles line length; B008: FastAPI Depends() pattern
