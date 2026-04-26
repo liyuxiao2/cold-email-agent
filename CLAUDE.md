@@ -20,7 +20,7 @@ The explicit goal of this project is **learning**. Liyu is building this to unde
 - Test scaffolding and fixtures
 - Import statements, type hints on new code
 
-### Claude teaches while implementing:
+### Claude teaches while liyu implements:
 
 - **Business logic** — explain _why_ the logic is structured the way it is, not just _what_ it does
 - **Async Python patterns** — when to use `async def`, when `await` is required, what the event loop is doing

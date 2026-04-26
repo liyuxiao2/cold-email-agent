@@ -46,7 +46,8 @@ def save_leads_to_db(leads: list[dict]) -> list[str]:
     ids = []
 
     with SyncSessionLocal() as session:
-        existing = session.query(Lead.company_name).all()
+        batch_names = [lead["company_name"] for lead in leads if lead.get("company_name")]
+        existing = session.query(Lead.company_name).filter(Lead.company_name.in_(batch_names)).all()
         existing_names = {row[0] for row in existing}
         for lead in leads:
             if lead.get("company_name") not in existing_names:
