@@ -16,6 +16,7 @@ from cold_email.workers.research import research_task
 
 logger = logging.getLogger(__name__)
 
+pool = redis.ConnectionPool.from_url(settings.celery_broker_url, max_connections=10)
 
 def extract_leads(urls: list[str], limit: int = 20) -> list[dict]:
     """
@@ -33,7 +34,7 @@ def extract_leads(urls: list[str], limit: int = 20) -> list[dict]:
 
 def get_next_url() -> str:
     """Round-robin through discovery URLs, one per run."""
-    r = redis.from_url(settings.celery_broker_url)
+    r = redis.Redis(connection_pool=pool)
     run_count = r.incr(DISCOVERY_RUN_COUNT_KEY) - 1
     index = run_count % len(settings.discovery_urls)
     url = settings.discovery_urls[index]
