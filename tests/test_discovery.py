@@ -9,7 +9,7 @@ def test_extract_leads_truncates_to_limit():
     fake_response = MagicMock()
     fake_response.data = {"leads": fake_leads}
 
-    with patch("cold_email.workers.discovery.Firecrawl") as MockFC:
+    with patch("cold_email.workers.discovery.discovery.Firecrawl") as MockFC:
         MockFC.return_value.extract.return_value = fake_response
         result = extract_leads(["https://example.com"], limit=5)
         MockFC.return_value.extract.assert_called_once()
@@ -22,7 +22,7 @@ def test_extract_leads_returns_empty_on_no_leads():
     fake_response = MagicMock()
     fake_response.data = {}
 
-    with patch("cold_email.workers.discovery.Firecrawl") as MockFC:
+    with patch("cold_email.workers.discovery.discovery.Firecrawl") as MockFC:
         MockFC.return_value.extract.return_value = fake_response
         result = extract_leads(["https://example.com"], limit=20)
 

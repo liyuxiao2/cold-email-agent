@@ -16,7 +16,7 @@ class Lead(Base):
     __tablename__ = "leads"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    company_name = Column(String, nullable=False)
+    company_name = Column(String, nullable=False, index=True)
     founder_name = Column(String)
     founder_email = Column(String)
     linkedin_url = Column(String)

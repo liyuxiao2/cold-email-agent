@@ -13,6 +13,8 @@ CREATE TABLE IF NOT EXISTS leads (
     updated_at    TIMESTAMPTZ DEFAULT NOW()
 );
 
+CREATE INDEX IF NOT EXISTS idx_leads_company_name ON leads (company_name);
+
 CREATE TABLE IF NOT EXISTS research (
     id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     lead_id       UUID REFERENCES leads(id) ON DELETE CASCADE,

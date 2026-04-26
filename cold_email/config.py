@@ -20,14 +20,51 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     instantly_api_key: str = ""
     instantly_campaign_id: str = ""
+    brave_api_key: str = ""
+    gemini_api_key: str = ""
 
     discovery_leads_per_run: int = 20
 
-    discovery_urls: list[str] = [
-        "https://startups.gallery/",
-        "https://www.ycombinator.com/companies",
-        "https://wellfound.com/companies",
+    industries: list[str] = [
+        "Aerospace",
+        "AI",
+        "Analytics",
+        "Biotech",
+        "Climate",
+        "Construction",
+        "Consumer",
+        "Cybersecurity",
+        "Design",
+        "DevTools",
+        "Education",
+        "Energy",
+        "Fintech",
+        "Food",
+        "Gaming",
+        "Hardware",
+        "Health & Wellness",
+        "Healthcare",
+        "HR & Recruiting",
+        "Infrastructure",
+        "Logistics",
+        "Productivity",
+        "Real Estate",
+        "Retail",
+        "Robotics",
+        "Transportation",
+        "Travel",
+        "Web3",
     ]
+
+    @computed_field
+    @property
+    def discovery_urls(self) -> list[str]:
+        """Build one startups.gallery URL per industry."""
+        base = "https://startups.gallery/categories/industries"
+        return [
+            f"{base}/{name.lower().replace(' & ', '-').replace(' ', '-')}"
+            for name in self.industries
+        ]
 
     sender_name: str = "Liyu Xiao"
     sender_role: str = "Software Engineer, Ledger Team"
