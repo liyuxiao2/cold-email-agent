@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 pool = redis.ConnectionPool.from_url(settings.celery_broker_url, max_connections=10)
 
+
 def extract_leads(urls: list[str], limit: int = 20) -> list[dict]:
     """
     Use Firecrawl Extract to pull structured lead data from any listing page.
