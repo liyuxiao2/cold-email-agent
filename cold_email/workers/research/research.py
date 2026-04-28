@@ -24,7 +24,8 @@ def fetch_lead(lead_id: str) -> Lead:
 
 
 def find_company_url(lead: Lead) -> str:
-    arguments = [arg for arg in lead if arg is not None]
+    query_parts = [lead.company_name, lead.funding_stage]
+    arguments = [arg for arg in query_parts if arg]
     params = {"q": " ".join(arguments), "count": 5, "result_filter": ["web"]}
     response = httpx.get(
         BRAVE_SEARCH_API_URL, params=params, headers=BRAVE_SEARCH_HEADERS, timeout=10
