@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 
 def fetch_lead(lead_id: str) -> Lead:
-    """Deduplicate and insert new leads, return list of new lead IDs."""
+    """Fetch a lead from the database by its ID."""
     with SyncSessionLocal() as session:
         lead = session.get(Lead, lead_id)
         logger.info(f"Lead fetched from DB: {lead}")
