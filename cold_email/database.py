@@ -1,3 +1,4 @@
+import contextlib
 import uuid
 
 from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text, create_engine, func
@@ -75,6 +76,7 @@ async def get_async_session() -> AsyncSession:
         yield session
 
 
+@contextlib.contextmanager
 def get_sync_session():
     """Celery helper — yields a sync session per task."""
     with SyncSessionLocal() as session:
