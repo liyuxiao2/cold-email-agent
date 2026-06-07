@@ -48,7 +48,7 @@ def save_leads_to_db(leads: list[dict]) -> list[str]:
     """Deduplicate and insert new leads, return list of new lead IDs."""
     ids = []
 
-    for session in get_sync_session():
+    with get_sync_session() as session:
         batch_names = [lead["company_name"] for lead in leads if lead.get("company_name")]
         existing = session.query(Lead.company_name).filter(Lead.company_name.in_(batch_names)).all()
         existing_names = {row[0] for row in existing}
