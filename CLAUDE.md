@@ -88,10 +88,21 @@ cold-email-agent/
 │   ├── celery_app.py            # Celery app + Beat schedule
 │   │
 │   ├── workers/
-│   │   ├── discovery.py         # startups.gallery scrape via Firecrawl
-│   │   ├── research.py          # Firecrawl + Claude extraction + Hunter.io enrichment
+│   │   ├── constants.py         # Shared Celery defaults (retries, delays)
 │   │   ├── drafting.py          # Claude email generation
-│   │   └── logistics.py         # Instantly.io sequencing
+│   │   ├── logistics.py         # Instantly.io sequencing
+│   │   │
+│   │   ├── discovery/           # Discovery worker subpackage
+│   │   │   ├── __init__.py
+│   │   │   ├── constants.py     # Discovery-specific constants
+│   │   │   └── discovery.py     # startups.gallery scrape via Firecrawl
+│   │   │
+│   │   └── research/            # Research worker subpackage
+│   │       ├── __init__.py
+│   │       ├── constants.py     # Research-specific constants
+│   │       ├── db_helpers.py    # DB reads/writes (fetch_lead, commit_research, update_lead_status)
+│   │       ├── extraction.py    # URL search, web scraping, Gemini LLM calls
+│   │       └── research.py      # Celery task orchestration only
 │   │
 │   ├── api/
 │   │   ├── main.py              # FastAPI app entrypoint
@@ -105,7 +116,19 @@ cold-email-agent/
 ├── migrations/
 │   └── 001_initial.sql
 └── tests/
+    └── test_research.py         # Unit tests for research worker helpers
 ```
+
+### Worker Module Conventions
+
+Each worker subpackage separates concerns across three layers:
+
+| File | Responsibility |
+|---|---|
+| `constants.py` | Magic numbers and string literals (no logic) |
+| `db_helpers.py` | Thin, domain-specific wrappers around SQLAlchemy session ops |
+| `extraction.py` | All I/O: HTTP, web scraping, LLM calls |
+| `<worker>.py` | `@shared_task` only — orchestrates helpers, no inline logic |
 
 ---
 

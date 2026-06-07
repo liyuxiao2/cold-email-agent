@@ -1,98 +1,83 @@
-import logging
-import re
-from urllib.parse import urlparse
+"""Research worker — Celery orchestration layer.
 
-import httpx
+This module contains only the @shared_task and the high-level pipeline steps.
+All I/O helpers live in sibling modules:
+  - extraction.py  — URL search, web scraping, LLM calls
+  - db_helpers.py  — database reads/writes
+"""
+
+import logging
+
 from celery import shared_task
 
-from cold_email.database import Lead, SyncSessionLocal
-from cold_email.workers.research.constants import (
-    AGGREGATOR_BLOCKLIST,
-    BRAVE_SEARCH_API_URL,
-    BRAVE_SEARCH_HEADERS,
+from cold_email.workers.constants import DEFAULT_MAX_RETRIES, DEFAULT_RETRY_DELAY
+from cold_email.workers.research.helpers.db_helpers import (
+    commit_research,
+    fetch_lead,
+    update_lead_status,
+)
+from cold_email.workers.research.helpers.extraction import (
+    call_gemini,
+    find_company_url,
+    parse_gemini_response,
+    scrape_website,
 )
 
 logger = logging.getLogger(__name__)
 
 
-def fetch_lead(lead_id: str) -> Lead:
-    """Fetch a lead from the database by its ID."""
-    with SyncSessionLocal() as session:
-        lead = session.get(Lead, lead_id)
-        logger.info(f"Lead fetched from DB: {lead}")
-    return lead
-
-
-def find_company_url(lead: Lead) -> str:
-    query_parts = [lead.company_name, lead.funding_stage]
-    arguments = [arg for arg in query_parts if arg]
-    params = {"q": " ".join(arguments), "count": 5, "result_filter": ["web"]}
-    response = httpx.get(
-        BRAVE_SEARCH_API_URL, params=params, headers=BRAVE_SEARCH_HEADERS, timeout=10
-    )
-    results = response.json().get("web", {}).get("results", [])
-    logger.info(f"Brave Search results for finding {lead.company_name}: {results}")
-    return select_best_url(results, lead)
-
-
-def select_best_url(results: list[dict], lead: Lead) -> str | None:
-    if not results:
-        return None
-
-    company_slug = re.sub(r"[^a-z0-9]", "", lead.company_name.lower())
-
-    scored: list[tuple[int, str]] = []
-    for result in results:
-        url = result.get("url", "")
-        domain = urlparse(url).netloc.lower().removeprefix("www.")
-        if any(blocked in domain for blocked in AGGREGATOR_BLOCKLIST):
-            continue
-        domain_slug = re.sub(r"[^a-z0-9]", "", domain)
-        score = 1 if company_slug in domain_slug else 0
-        scored.append((score, url))
-
-    if not scored:
-        return results[0].get("url")
-
-    scored.sort(key=lambda x: x[0], reverse=True)
-    return scored[0][1]
-
-
 @shared_task(
     bind=True,
     autoretry_for=(Exception,),
-    max_retries=3,
-    default_retry_delay=60,
+    max_retries=DEFAULT_MAX_RETRIES,
+    default_retry_delay=DEFAULT_RETRY_DELAY,
     name="cold_email.workers.research.research_task",
 )
 def research_task(self, lead_id: str) -> dict:
     """
     Dispatched by discovery_task per lead.
-    Steps (to be implemented):
-      1. Fetch lead from DB (use SyncSessionLocal — Celery runs sync)
-      2. Call Brave Search API to find it
-         POST https://api.search.brave.com/res/v1/web/search
-         Header: X-Subscription-Token: settings.brave_api_key
-         Take results[0]["url"] as the company homepage
-      3. Scrape homepage with BeautifulSoup (requests.get → strip script/style/nav tags → .get_text())
-         Fallback to FirecrawlApp.scrape_url() if content is too short (< ~300 chars)
-         Truncate to ~8,000 chars before passing to LLM
-      4. Call Gemini Flash for structured extraction → dict with tech_stack, recent_news, hook
-         from google import genai
-         client = genai.Client(api_key=settings.gemini_api_key)
-         Use response_mime_type="application/json" + response_schema to enforce output shape
-         (Gemini's equivalent of Claude's tool_choice="any" pattern)
-      5. Insert row into research table, update lead.status = 'researched', commit
+    Steps:
+      1. Fetch lead from DB
+      2. Call Brave Search API to find the company homepage
+      3. Scrape homepage with BeautifulSoup (requests.get), fallback to Firecrawl
+      4. Call Gemini Flash for structured extraction
+      5. Insert row into research table, update lead.status = 'researched'
       6. Dispatch drafting_task.delay(lead_id)
     """
     lead = fetch_lead(lead_id)
 
+    if not lead:
+        logger.error(f"Lead {lead_id} not found in DB")
+        return {"status": "failed", "error": "Lead not found"}
+
     lead_url = find_company_url(lead)
 
-    if lead_url:
-        # TODO: implement scraping and LLM extraction
-        pass
-    else:
+    if not lead_url:
         logger.error(f"Could not find company URL for lead {lead_id}")
-        lead.status = "failed"
-        return
+        update_lead_status(
+            lead_id,
+            status="failed",
+            error_msg=f"Could not find company URL for {lead.company_name}",
+        )
+        return {"status": "failed", "error": "Company URL not found"}
+
+    text = scrape_website(lead_url)
+    response = call_gemini(text, lead.company_name)
+    research_dict = parse_gemini_response(response)
+
+    commit_research(
+        lead_id=lead_id,
+        tech_stack=research_dict.get("tech_stack"),
+        recent_news=research_dict.get("recent_news"),
+        hook=research_dict.get("hook"),
+        raw_content=response.text,
+    )
+
+    update_lead_status(lead_id, status="researched")
+
+    # Import here to avoid circular imports between worker modules
+    from cold_email.workers.drafting import drafting_task
+
+    drafting_task.delay(lead_id)
+
+    return {"status": "success"}
