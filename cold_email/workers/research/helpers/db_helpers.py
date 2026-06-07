@@ -27,7 +27,7 @@ def commit_research(
     raw_content: str | None,
 ) -> None:
     """Insert a new Research row for the given lead."""
-    for session in get_sync_session():
+    with get_sync_session() as session:
         session.add(
             Research(
                 lead_id=lead_id,
@@ -43,7 +43,7 @@ def commit_research(
 
 def update_lead_status(lead_id: str, status: str, error_msg: str | None = None) -> None:
     """Update the status (and optional error message) of a lead."""
-    for session in get_sync_session():
+    with get_sync_session() as session:
         db_lead = session.get(Lead, lead_id)
         if db_lead:
             db_lead.status = status
