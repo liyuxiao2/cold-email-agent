@@ -26,3 +26,9 @@ LEAD_EXTRACT_SCHEMA = {
 
 # Prompt template for Firecrawl Extract (use .format(limit=N))
 EXTRACT_PROMPT = "Extract up to {limit} companies with their name and funding stage."
+
+# Redis connection settings
+REDIS_MAX_CONNECTIONS = 10
+
+# Extraction limits
+DEFAULT_LEADS_LIMIT = 20

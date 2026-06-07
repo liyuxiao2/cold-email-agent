@@ -6,17 +6,18 @@ from firecrawl import Firecrawl
 
 from cold_email.celery_app import app as celery_app  # noqa: F401 – ensures broker is configured
 from cold_email.config import settings
-from cold_email.database import Lead, SyncSessionLocal
+from cold_email.database import Lead, get_sync_session
 from cold_email.workers.discovery.constants import (
     DISCOVERY_RUN_COUNT_KEY,
     EXTRACT_PROMPT,
     LEAD_EXTRACT_SCHEMA,
+    REDIS_MAX_CONNECTIONS,
 )
 from cold_email.workers.research import research_task
 
 logger = logging.getLogger(__name__)
 
-pool = redis.ConnectionPool.from_url(settings.celery_broker_url, max_connections=10)
+pool = redis.ConnectionPool.from_url(settings.celery_broker_url, max_connections=REDIS_MAX_CONNECTIONS)
 
 
 def extract_leads(urls: list[str], limit: int = 20) -> list[dict]:
@@ -47,7 +48,7 @@ def save_leads_to_db(leads: list[dict]) -> list[str]:
     """Deduplicate and insert new leads, return list of new lead IDs."""
     ids = []
 
-    with SyncSessionLocal() as session:
+    with get_sync_session() as session:
         batch_names = [lead["company_name"] for lead in leads if lead.get("company_name")]
         existing = session.query(Lead.company_name).filter(Lead.company_name.in_(batch_names)).all()
         existing_names = {row[0] for row in existing}
