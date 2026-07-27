@@ -23,6 +23,17 @@ class Settings(BaseSettings):
     brave_api_key: str = ""
     gemini_api_key: str = ""
 
+    # Gmail API — OAuth2 refresh-token flow (single sender mailbox)
+    gmail_client_id: str = ""
+    gmail_client_secret: str = ""
+    gmail_refresh_token: str = ""
+    gmail_sender_email: str = ""
+
+    # Sender identity injected into the email-draft prompt
+    sender_name: str = ""
+    sender_role: str = ""
+    sender_company: str = ""
+
     discovery_leads_per_run: int = 20
 
     industries: list[str] = [
@@ -69,6 +80,8 @@ class Settings(BaseSettings):
     sender_name: str = "Liyu Xiao"
     sender_role: str = "Software Engineer, Ledger Team"
     sender_company: str = "Wealthsimple"
+
+    model_name: str = "gemini-2.5-flash"
 
 
 settings = Settings()
