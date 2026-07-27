@@ -119,7 +119,7 @@ def scrape_website(lead_url: str) -> str:
 def call_gemini(text: str, company_name: str):
     """Send scraped content to Gemini and return the raw model response."""
     client = genai.Client(api_key=settings.gemini_api_key)
-    model = client.models.get(GEMINI_MODEL_NAME)
+    model = client.models.get(model=GEMINI_MODEL_NAME)
     return model.generate_content(
         build_extraction_messages(company_name=company_name, scraped_content=text),
         config={

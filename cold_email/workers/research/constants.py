@@ -1,9 +1,11 @@
+from cold_email.config import settings
+
 BRAVE_SEARCH_API_URL = "https://api.search.brave.com/res/v1/web/search"
 
 BRAVE_SEARCH_HEADERS = {
     "Accept": "application/json",
     "Accept-Encoding": "gzip",
-    "X-Subscription-Token": "<YOUR_API_KEY>",
+    "X-Subscription-Token": settings.brave_api_key,
 }
 
 # Domains that aggregate startup info but are never the official homepage.

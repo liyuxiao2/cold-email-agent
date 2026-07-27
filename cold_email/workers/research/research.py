@@ -13,15 +13,14 @@ from celery import shared_task
 from cold_email.workers.constants import DEFAULT_MAX_RETRIES, DEFAULT_RETRY_DELAY
 from cold_email.workers.research.helpers.db_helpers import (
     commit_research,
-    fetch_lead,
     update_lead_status,
 )
 from cold_email.workers.research.helpers.extraction import (
     call_gemini,
-    find_company_url,
     parse_gemini_response,
     scrape_website,
 )
+from cold_email.workers.research.helpers.preflight import resolve_lead_url
 
 logger = logging.getLogger(__name__)
 
@@ -44,22 +43,12 @@ def research_task(self, lead_id: str) -> dict:
       5. Insert row into research table, update lead.status = 'researched'
       6. Dispatch drafting_task.delay(lead_id)
     """
-    lead = fetch_lead(lead_id)
+    resolution = resolve_lead_url(lead_id)
 
-    if not lead:
-        logger.error(f"Lead {lead_id} not found in DB")
-        return {"status": "failed", "error": "Lead not found"}
-
-    lead_url = find_company_url(lead)
-
-    if not lead_url:
-        logger.error(f"Could not find company URL for lead {lead_id}")
-        update_lead_status(
-            lead_id,
-            status="failed",
-            error_msg=f"Could not find company URL for {lead.company_name}",
-        )
-        return {"status": "failed", "error": "Company URL not found"}
+    if resolution.failure:
+        return resolution.failure
+    
+    lead, lead_url = resolution.lead, resolution.url
 
     text = scrape_website(lead_url)
     response = call_gemini(text, lead.company_name)
@@ -75,7 +64,8 @@ def research_task(self, lead_id: str) -> dict:
 
     update_lead_status(lead_id, status="researched")
 
-    # Import here to avoid circular imports between worker modules
+    # Deferred import: drafting imports research.constants, so a top-level
+    # import here would form a cycle. Importing at call-time avoids it.
     from cold_email.workers.drafting import drafting_task
 
     drafting_task.delay(lead_id)

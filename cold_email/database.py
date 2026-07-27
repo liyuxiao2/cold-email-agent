@@ -56,6 +56,7 @@ class Draft(Base):
     body = Column(Text, nullable=False)
     version = Column(Integer, default=1)
     reviewer_notes = Column(Text)
+    gmail_draft_id = Column(String)  # Gmail's draft resource ID, for later send/delete
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     lead = relationship("Lead", back_populates="drafts")

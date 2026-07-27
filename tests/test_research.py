@@ -29,7 +29,7 @@ def test_find_company_url():
     mock_response = MagicMock()
     mock_response.json.return_value = {"web": {"results": [{"url": "https://acme.com"}]}}
     with patch(
-        "cold_email.workers.research.extraction.httpx.get", return_value=mock_response
+        "cold_email.workers.research.helpers.extraction.httpx.get", return_value=mock_response
     ) as mock_get:
         url = find_company_url(lead)
         mock_get.assert_called_once()
@@ -63,7 +63,7 @@ def test_scrape_website_firecrawl_fallback():
 
     with (
         patch("requests.get", return_value=mock_response),
-        patch("cold_email.workers.research.extraction.FirecrawlApp") as MockFC,
+        patch("cold_email.workers.research.helpers.extraction.FirecrawlApp") as MockFC,
     ):
         MockFC.return_value.scrape.return_value = mock_fc_response
         text = scrape_website("https://example.com")
@@ -72,6 +72,6 @@ def test_scrape_website_firecrawl_fallback():
 
 def test_research_task_lead_not_found():
     # If lead is not found, research_task should return status: failed
-    with patch("cold_email.workers.research.research.fetch_lead", return_value=None):
+    with patch("cold_email.workers.research.helpers.preflight.fetch_lead", return_value=None):
         result = research_task.apply(args=[FAKE_UUID]).get(propagate=True)
         assert result == {"status": "failed", "error": "Lead not found"}
