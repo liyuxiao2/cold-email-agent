@@ -18,7 +18,7 @@ from cold_email.config import settings
 
 logger = logging.getLogger(__name__)
 
-GMAIL_TOKEN_URI = "https://oauth2.googleapis.com/token"
+GMAIL_TOKEN_URI = "https://oauth2.googleapis.com/token"  # noqa: S105 (OAuth token endpoint, not a secret)
 GMAIL_SCOPES = ["https://www.googleapis.com/auth/gmail.compose"]
 
 
@@ -57,3 +57,20 @@ def create_draft(to: str, subject: str, body: str) -> str:
     )
     logger.info(f"Created Gmail draft {draft['id']} to {to}")
     return draft["id"]
+
+
+def send_draft(draft_id: str) -> str:
+    """Send an existing Gmail draft by its draft resource ID; return the sent message ID.
+
+    drafts.send moves the draft out of Drafts and delivers it in one call — no need
+    to rebuild the message. The gmail.compose scope already permits sending.
+    """
+    service = _build_service()
+    sent = (
+        service.users()
+        .drafts()
+        .send(userId="me", body={"id": draft_id})
+        .execute()
+    )
+    logger.info(f"Sent Gmail draft {draft_id} as message {sent['id']}")
+    return sent["id"]
