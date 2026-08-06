@@ -6,32 +6,13 @@ only holds Celery orchestration. Reads come from the pending_drafts view
 """
 
 import logging
-from dataclasses import dataclass
 
 from sqlalchemy import text
 
 from cold_email.database import Draft, get_sync_session
+from cold_email.workers.views import PendingDraft
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class PendingDraft:
-    """One row of the pending_drafts view: a researched lead + its latest research.
-
-    Field names must match the view's column aliases (see migrations/002) so
-    fetch_pending_drafts can build these with PendingDraft(**row).
-    """
-
-    lead_id: str
-    company_name: str
-    founder_name: str
-    founder_email: str
-    company_url: str
-    raw_content: str
-    tech_stack: str | None
-    recent_news: str | None
-    hook: str | None
 
 
 def fetch_pending_drafts() -> list[PendingDraft]:

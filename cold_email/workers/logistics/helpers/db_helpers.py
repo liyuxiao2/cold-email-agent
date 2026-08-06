@@ -9,11 +9,12 @@ import logging
 from sqlalchemy import text
 
 from cold_email.database import get_sync_session
+from cold_email.workers.views import PendingSend
 
 logger = logging.getLogger(__name__)
 
 
-def fetch_send_inputs(lead_id: str) -> dict | None:
+def fetch_send_inputs(lead_id: str) -> PendingSend | None:
     """Return the pending_sends row for one lead, or None if it isn't sendable.
 
     A missing row means the lead isn't in the 'approved' state (already sent, or
@@ -28,4 +29,4 @@ def fetch_send_inputs(lead_id: str) -> dict | None:
             .mappings()
             .first()
         )
-    return dict(row) if row else None
+    return PendingSend(**row) if row else None

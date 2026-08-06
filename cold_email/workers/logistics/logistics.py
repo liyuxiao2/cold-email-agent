@@ -42,12 +42,12 @@ def logistics_task(self, lead_id: str) -> dict:
         logger.info(f"Lead {lead_id} not pending send; skipping")
         return {"status": "skipped", "reason": "lead not pending send"}
 
-    if not inputs.get("gmail_draft_id"):
+    if not inputs.gmail_draft_id:
         handle_terminal_failure(lead_id, ERR_NO_GMAIL_DRAFT)
         return {"status": "failed", "error": ERR_NO_GMAIL_DRAFT}
 
     # A transient Gmail error here raises → Celery retries this single lead.
-    send_draft(inputs["gmail_draft_id"])
+    send_draft(inputs.gmail_draft_id)
     update_lead_status(lead_id, "sent")
 
     return {"status": "success"}

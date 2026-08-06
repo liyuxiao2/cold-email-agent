@@ -9,10 +9,6 @@ MODEL_NAME = "gemini-2.5-flash"
 JSON_BLOCK_START_MARKER = "```json"
 JSON_BLOCK_END_MARKER = "```"
 
-# The Lead table has no founder title; startups.gallery leads are founders, so
-# this is the default recipient title injected into the draft prompt.
-DEFAULT_FOUNDER_TITLE = "Founder"
-
 # Terminal per-lead failure reasons — written to leads.error_msg so a bad lead
 # is excluded from future sweeps instead of retried forever.
 ERR_NO_FOUNDER_EMAIL = "No founder email to draft to"

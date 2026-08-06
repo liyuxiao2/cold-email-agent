@@ -1,7 +1,7 @@
 from unittest.mock import patch
 
 from cold_email.workers.drafting.drafting import drafting_task
-from cold_email.workers.drafting.helpers.db_helpers import PendingDraft
+from cold_email.workers.views import PendingDraft
 
 LEAD_A = "00000000-0000-0000-0000-00000000000a"
 LEAD_B = "00000000-0000-0000-0000-00000000000b"

@@ -16,12 +16,11 @@ from cold_email.prompts.email_draft import (
     build_email_draft_messages,
 )
 from cold_email.workers.drafting.constants import (
-    DEFAULT_FOUNDER_TITLE,
     JSON_BLOCK_END_MARKER,
     JSON_BLOCK_START_MARKER,
     MODEL_NAME,
 )
-from cold_email.workers.drafting.helpers.db_helpers import PendingDraft
+from cold_email.workers.views import PendingDraft
 
 logger = logging.getLogger(__name__)
 
@@ -38,18 +37,14 @@ def draft_email(row: PendingDraft) -> dict:
 def generate_email(row: PendingDraft):
     """Send a pending_drafts row to Gemini and return the raw model response.`
 
-    `row` is a PendingDraft from the pending_drafts view: it carries company_name,
-    founder_name, founder_email and the joined research (tech_stack/recent_news/hook).
-    Sender identity comes from settings.
+    `row` is a PendingDraft from the pending_drafts view. Sender identity and the
+    recipient title default live in the prompt builder, so we only pass the
+    recipient/research fields here.
     """
     client = genai.Client(api_key=settings.gemini_api_key)
     model = client.models.get(model=MODEL_NAME)
     messages = build_email_draft_messages(
-        sender_name=settings.sender_name,
-        sender_role=settings.sender_role,
-        sender_company=settings.sender_company,
         founder_name=row.founder_name or "there",
-        founder_title=DEFAULT_FOUNDER_TITLE,
         company_name=row.company_name,
         tech_stack=row.tech_stack or [],
         recent_news=row.recent_news or "",
