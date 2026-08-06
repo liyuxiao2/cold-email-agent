@@ -54,10 +54,12 @@ def test_logistics_fails_without_gmail_draft_id():
             return_value={"lead_id": LEAD_ID, "gmail_draft_id": None},
         ),
         patch("cold_email.workers.logistics.logistics.send_draft") as mock_send,
-        patch("cold_email.workers.logistics.logistics.update_lead_status") as mock_status,
+        patch(
+            "cold_email.workers.logistics.logistics.handle_terminal_failure"
+        ) as mock_terminal,
     ):
         result = logistics_task.apply(args=[LEAD_ID]).get(propagate=True)
 
     assert result["status"] == "failed"
     mock_send.assert_not_called()
-    assert mock_status.call_args.args[:2] == (LEAD_ID, "failed")
+    assert mock_terminal.call_args.args[0] == LEAD_ID

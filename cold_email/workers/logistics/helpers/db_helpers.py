@@ -8,7 +8,7 @@ import logging
 
 from sqlalchemy import text
 
-from cold_email.database import Lead, get_sync_session
+from cold_email.database import get_sync_session
 
 logger = logging.getLogger(__name__)
 
@@ -29,15 +29,3 @@ def fetch_send_inputs(lead_id: str) -> dict | None:
             .first()
         )
     return dict(row) if row else None
-
-
-def update_lead_status(lead_id: str, status: str, error_msg: str | None = None) -> None:
-    """Update the status (and optional error message) of a lead."""
-    with get_sync_session() as session:
-        db_lead = session.get(Lead, lead_id)
-        if db_lead:
-            db_lead.status = status
-            if error_msg is not None:
-                db_lead.error_msg = error_msg
-            session.commit()
-            logger.info(f"Lead {lead_id} status updated to {status!r}")

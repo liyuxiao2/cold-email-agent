@@ -11,10 +11,8 @@ import logging
 from celery import shared_task
 
 from cold_email.workers.constants import DEFAULT_MAX_RETRIES, DEFAULT_RETRY_DELAY
-from cold_email.workers.research.helpers.db_helpers import (
-    commit_research,
-    update_lead_status,
-)
+from cold_email.workers.db_helpers import update_lead_status
+from cold_email.workers.research.helpers.db_helpers import commit_research
 from cold_email.workers.research.helpers.extraction import (
     call_gemini,
     parse_gemini_response,

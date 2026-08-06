@@ -7,7 +7,8 @@ Triggered on a schedule by Celery Beat (see celery_app.py), so leads that reach
 
 Helpers live in sibling modules:
   - generation.py  — Gemini email generation
-  - db_helpers.py  — pending_drafts read, draft write, status write
+  - db_helpers.py  — pending_drafts read, draft write
+Shared failure handling lives in cold_email.workers.errors.
 """
 
 import logging
@@ -15,13 +16,14 @@ import logging
 from celery import shared_task
 
 from cold_email.workers.constants import DEFAULT_MAX_RETRIES, DEFAULT_RETRY_DELAY
+from cold_email.workers.db_helpers import update_lead_status
 from cold_email.workers.drafting.constants import ERR_EMPTY_DRAFT, ERR_NO_FOUNDER_EMAIL
 from cold_email.workers.drafting.helpers.db_helpers import (
     commit_draft,
     fetch_pending_drafts,
-    update_lead_status,
 )
 from cold_email.workers.drafting.helpers.generation import draft_email
+from cold_email.workers.errors import handle_terminal_failure, handle_transient_failure
 from cold_email.workers.gmail_client import create_draft
 
 logger = logging.getLogger(__name__)
@@ -39,11 +41,11 @@ def drafting_task(self) -> dict:
 
     Two failure classes, handled differently per lead so one bad lead never
     aborts the whole sweep:
-      * Terminal (no founder email, empty model output) → mark the lead 'failed'
-        with an error_msg. It leaves the 'researched' state, so it drops out of
-        pending_drafts and won't be retried on the next sweep.
-      * Transient (Gemini/Gmail network hiccup) → log and leave the lead at
-        'researched'. The next Beat sweep naturally retries it.
+      * Terminal (no founder email, empty model output) → handle_terminal_failure
+        marks the lead 'failed'. It leaves the 'researched' state, drops out of
+        pending_drafts, and won't be retried on the next sweep.
+      * Transient (Gemini/Gmail network hiccup) → handle_transient_failure logs
+        and leaves the lead at 'researched'. The next Beat sweep retries it.
 
     autoretry_for only fires for errors *outside* the loop (e.g. the initial
     pending_drafts read), never for a single lead — those are caught here.
@@ -58,8 +60,7 @@ def drafting_task(self) -> dict:
 
         # Terminal: can't email a lead with no address.
         if not row.founder_email:
-            update_lead_status(lead_id, "failed", error_msg=ERR_NO_FOUNDER_EMAIL)
-            logger.warning(f"Lead {lead_id} has no founder_email; marked failed")
+            handle_terminal_failure(lead_id, ERR_NO_FOUNDER_EMAIL)
             continue
 
         try:
@@ -67,8 +68,7 @@ def drafting_task(self) -> dict:
 
             # Terminal: a blank or malformed draft isn't worth retrying blindly.
             if not draft.get("subject") or not draft.get("body"):
-                update_lead_status(lead_id, "failed", error_msg=ERR_EMPTY_DRAFT)
-                logger.warning(f"Lead {lead_id} produced an empty draft; marked failed")
+                handle_terminal_failure(lead_id, ERR_EMPTY_DRAFT)
                 continue
 
             gmail_draft_id = create_draft(
@@ -87,6 +87,6 @@ def drafting_task(self) -> dict:
 
         except Exception as exc:
             # Transient: leave at 'researched' so the next sweep picks it up.
-            logger.error(f"Transient failure drafting lead {lead_id}: {exc}")
+            handle_transient_failure(lead_id, exc)
 
     return {"status": "success", "drafted": drafted}
