@@ -1,4 +1,4 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from cold_email.workers.drafting.drafting import drafting_task
 from cold_email.workers.drafting.helpers.db_helpers import PendingDraft
@@ -37,9 +37,8 @@ def test_drafting_sweep_happy_path():
             "cold_email.workers.drafting.drafting.fetch_pending_drafts",
             return_value=[_pending_row(LEAD_A)],
         ),
-        patch("cold_email.workers.drafting.drafting.generate_email", return_value=MagicMock()),
         patch(
-            "cold_email.workers.drafting.drafting.parse_email_response",
+            "cold_email.workers.drafting.drafting.draft_email",
             return_value={"subject": "Hi", "body": "A specific, short note."},
         ),
         patch(
@@ -63,13 +62,13 @@ def test_drafting_skips_lead_without_email():
             "cold_email.workers.drafting.drafting.fetch_pending_drafts",
             return_value=[_pending_row(LEAD_A, founder_email=None)],
         ),
-        patch("cold_email.workers.drafting.drafting.generate_email") as mock_gen,
+        patch("cold_email.workers.drafting.drafting.draft_email") as mock_draft,
         patch("cold_email.workers.drafting.drafting.update_lead_status") as mock_status,
     ):
         result = drafting_task.apply(args=[]).get(propagate=True)
 
     assert result == {"status": "success", "drafted": 0}
-    mock_gen.assert_not_called()
+    mock_draft.assert_not_called()
     mock_status.assert_called_once()
     assert mock_status.call_args.args[:2] == (LEAD_A, "failed")
 
@@ -81,8 +80,7 @@ def test_drafting_marks_empty_draft_failed():
             "cold_email.workers.drafting.drafting.fetch_pending_drafts",
             return_value=[_pending_row(LEAD_A)],
         ),
-        patch("cold_email.workers.drafting.drafting.generate_email", return_value=MagicMock()),
-        patch("cold_email.workers.drafting.drafting.parse_email_response", return_value={}),
+        patch("cold_email.workers.drafting.drafting.draft_email", return_value={}),
         patch("cold_email.workers.drafting.drafting.create_draft") as mock_create,
         patch("cold_email.workers.drafting.drafting.update_lead_status") as mock_status,
     ):
@@ -100,9 +98,8 @@ def test_drafting_one_bad_lead_does_not_abort_sweep():
             "cold_email.workers.drafting.drafting.fetch_pending_drafts",
             return_value=[_pending_row(LEAD_A), _pending_row(LEAD_B)],
         ),
-        patch("cold_email.workers.drafting.drafting.generate_email", return_value=MagicMock()),
         patch(
-            "cold_email.workers.drafting.drafting.parse_email_response",
+            "cold_email.workers.drafting.drafting.draft_email",
             return_value={"subject": "Hi", "body": "Body"},
         ),
         # First create_draft raises (transient), second succeeds.

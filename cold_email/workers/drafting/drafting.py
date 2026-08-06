@@ -21,10 +21,7 @@ from cold_email.workers.drafting.helpers.db_helpers import (
     fetch_pending_drafts,
     update_lead_status,
 )
-from cold_email.workers.drafting.helpers.generation import (
-    generate_email,
-    parse_email_response,
-)
+from cold_email.workers.drafting.helpers.generation import draft_email
 from cold_email.workers.gmail_client import create_draft
 
 logger = logging.getLogger(__name__)
@@ -66,8 +63,7 @@ def drafting_task(self) -> dict:
             continue
 
         try:
-            response = generate_email(row)
-            draft = parse_email_response(response)
+            draft = draft_email(row)
 
             # Terminal: a blank or malformed draft isn't worth retrying blindly.
             if not draft.get("subject") or not draft.get("body"):

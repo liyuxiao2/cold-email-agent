@@ -26,6 +26,15 @@ from cold_email.workers.drafting.helpers.db_helpers import PendingDraft
 logger = logging.getLogger(__name__)
 
 
+def draft_email(row: PendingDraft) -> dict:
+    """Produce a {subject, body} draft for a lead ({} if the model returns nothing).
+
+    Composes the two LLM steps so the worker calls one thing instead of wiring
+    generate → parse itself.
+    """
+    return parse_email_response(generate_email(row))
+
+
 def generate_email(row: PendingDraft):
     """Send a pending_drafts row to Gemini and return the raw model response.`
 

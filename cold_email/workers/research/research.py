@@ -64,7 +64,4 @@ def research_task(self, lead_id: str) -> dict:
 
     update_lead_status(lead_id, status="researched")
 
-    # Drafting is no longer chained here — it's a batch sweep driven by Celery
-    # Beat (see celery_app.py). Leaving the lead at 'researched' is the handoff:
-    # the next drafting_task sweep reads it from the pending_drafts view.
     return {"status": "success"}

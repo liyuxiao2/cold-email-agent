@@ -83,8 +83,6 @@ async def regenerate_lead(
         await session.commit()
         from cold_email.workers.drafting import drafting_task
 
-        # Batch sweep takes no lead_id; kick one now so regeneration is
-        # immediate rather than waiting for the next Beat tick. Safe even if it
-        # sweeps other pending leads too — drafting is idempotent via the view.
+        # Kick an immediate sweep (no lead_id); idempotent via the view.
         drafting_task.delay()
     return RedirectResponse(url="/", status_code=303)
