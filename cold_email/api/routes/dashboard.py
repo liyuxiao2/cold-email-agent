@@ -78,10 +78,13 @@ async def regenerate_lead(
 ):
     lead = await session.get(Lead, lead_id)
     if lead:
-        # Step back to 'researched' so drafting_task re-runs from scratch
+        # Step back to 'researched' so the drafting sweep re-drafts this lead.
         lead.status = "researched"
         await session.commit()
         from cold_email.workers.drafting import drafting_task
 
-        drafting_task.delay(lead_id)
+        # Batch sweep takes no lead_id; kick one now so regeneration is
+        # immediate rather than waiting for the next Beat tick. Safe even if it
+        # sweeps other pending leads too — drafting is idempotent via the view.
+        drafting_task.delay()
     return RedirectResponse(url="/", status_code=303)
