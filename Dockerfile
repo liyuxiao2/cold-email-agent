@@ -12,11 +12,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Install uv package manager
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
-# Copy dependency definitions
+# Copy dependency definitions.
+# NOTE: uv.lock is intentionally NOT copied — it is generated on a network that
+# pins packages to a private, authenticated mirror unreachable from CI. We
+# resolve fresh from the default public index (pypi.org) inside the clean build
+# container instead. See .gcloudignore.
 COPY pyproject.toml ./
-COPY uv.lock* ./
 
-# Install dependencies into virtualenv
+# Install dependencies into virtualenv (resolves + locks against pypi.org)
 RUN uv sync --no-install-project --no-dev
 
 
