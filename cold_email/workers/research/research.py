@@ -41,13 +41,13 @@ def research_task(self, lead_id: str) -> dict:
       3. Scrape homepage with BeautifulSoup (requests.get), fallback to Firecrawl
       4. Call Gemini Flash for structured extraction
       5. Insert row into research table, update lead.status = 'researched'
-      6. Dispatch drafting_task.delay(lead_id)
+         (the drafting batch sweep picks it up from there — no dispatch here)
     """
     resolution = resolve_lead_url(lead_id)
 
     if resolution.failure:
         return resolution.failure
-    
+
     lead, lead_url = resolution.lead, resolution.url
 
     text = scrape_website(lead_url)
@@ -63,11 +63,5 @@ def research_task(self, lead_id: str) -> dict:
     )
 
     update_lead_status(lead_id, status="researched")
-
-    # Deferred import: drafting imports research.constants, so a top-level
-    # import here would form a cycle. Importing at call-time avoids it.
-    from cold_email.workers.drafting import drafting_task
-
-    drafting_task.delay(lead_id)
 
     return {"status": "success"}

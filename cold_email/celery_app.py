@@ -19,7 +19,13 @@ app.conf.beat_schedule = {
     "discovery-every-monday": {
         "task": "cold_email.workers.discovery.discovery_task",
         "schedule": crontab(hour=8, minute=0, day_of_week="monday"),
-    }
+    },
+    # Drafting is a batch sweep, not chained off research. This periodic tick
+    # collects every lead that has reached 'researched' since the last run.
+    "drafting-sweep": {
+        "task": "cold_email.workers.drafting.drafting_task",
+        "schedule": crontab(minute="*/15"),
+    },
 }
 
 app.autodiscover_tasks(["cold_email.workers"])
