@@ -1,6 +1,6 @@
 """Logistics worker — Celery orchestration layer.
 
-Event-driven, per-lead: the dashboard's Approve handler sets status='approved'
+Event-driven, per-lead: the /api/leads/{id}/approve endpoint sets status='approved'
 and dispatches logistics_task.delay(lead_id). This task sends the Gmail draft
 that drafting already created, then advances the lead to 'sent'.
 

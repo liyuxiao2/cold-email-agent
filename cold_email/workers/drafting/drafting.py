@@ -8,7 +8,7 @@ Triggered on a schedule by Celery Beat (see celery_app.py), so leads that reach
 Helpers live in sibling modules:
   - generation.py  — Gemini email generation
   - db_helpers.py  — pending_drafts read, draft write
-Shared failure handling lives in cold_email.workers.errors.
+Shared failure handling lives in cold_email.workers.shared.errors.
 """
 
 import logging

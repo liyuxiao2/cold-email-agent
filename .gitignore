@@ -11,3 +11,6 @@ node_modules/
 .next/
 .vercel/
 
+# Celery Beat runtime schedule (regenerated on every run)
+celerybeat-schedule.db
+
