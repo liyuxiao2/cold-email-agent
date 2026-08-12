@@ -20,7 +20,7 @@ from cold_email.workers.drafting.constants import (
     JSON_BLOCK_START_MARKER,
     MODEL_NAME,
 )
-from cold_email.workers.views import PendingDraft
+from cold_email.workers.shared.views import PendingDraft
 
 logger = logging.getLogger(__name__)
 

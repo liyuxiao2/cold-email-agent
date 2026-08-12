@@ -1,7 +1,7 @@
 from unittest.mock import patch
 
 from cold_email.workers.logistics.logistics import logistics_task
-from cold_email.workers.views import PendingSend
+from cold_email.workers.shared.views import PendingSend
 
 LEAD_ID = "00000000-0000-0000-0000-000000000000"
 

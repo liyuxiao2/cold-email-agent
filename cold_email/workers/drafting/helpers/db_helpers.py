@@ -10,7 +10,7 @@ import logging
 from sqlalchemy import text
 
 from cold_email.database import Draft, get_sync_session
-from cold_email.workers.views import PendingDraft
+from cold_email.workers.shared.views import PendingDraft
 
 logger = logging.getLogger(__name__)
 

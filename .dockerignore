@@ -1,0 +1,17 @@
+.git
+.venv
+__pycache__
+*.pyc
+.pytest_cache
+.ruff_cache
+.coverage
+htmlcov
+dist
+build
+celerybeat-schedule*
+.env
+frontend
+node_modules
+**/node_modules
+.DS_Store
+

@@ -3,7 +3,15 @@ from celery.schedules import crontab
 
 from cold_email.config import settings
 
-app = Celery("cold_email")
+app = Celery(
+    "cold_email",
+    include=[
+        "cold_email.workers.discovery",
+        "cold_email.workers.research",
+        "cold_email.workers.drafting",
+        "cold_email.workers.logistics",
+    ],
+)
 
 app.conf.update(
     broker_url=settings.celery_broker_url,
@@ -28,4 +36,3 @@ app.conf.beat_schedule = {
     },
 }
 
-app.autodiscover_tasks(["cold_email.workers"])

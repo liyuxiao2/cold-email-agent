@@ -30,9 +30,9 @@ class Settings(BaseSettings):
     gmail_sender_email: str = ""
 
     # Sender identity injected into the email-draft prompt
-    sender_name: str = ""
-    sender_role: str = ""
-    sender_company: str = ""
+    sender_name: str = "Liyu Xiao"
+    sender_role: str = "Software Engineer, Ledger Team"
+    sender_company: str = "Wealthsimple"
 
     discovery_leads_per_run: int = 20
 
@@ -77,11 +77,11 @@ class Settings(BaseSettings):
             for name in self.industries
         ]
 
-    sender_name: str = "Liyu Xiao"
-    sender_role: str = "Software Engineer, Ledger Team"
-    sender_company: str = "Wealthsimple"
+    cors_origins: list[str] = ["*"]
 
     model_name: str = "gemini-2.5-flash"
 
 
 settings = Settings()
+
+

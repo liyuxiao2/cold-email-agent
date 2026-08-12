@@ -9,7 +9,7 @@ import logging
 from sqlalchemy import text
 
 from cold_email.database import get_sync_session
-from cold_email.workers.views import PendingSend
+from cold_email.workers.shared.views import PendingSend
 
 logger = logging.getLogger(__name__)
 

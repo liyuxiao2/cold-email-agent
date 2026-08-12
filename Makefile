@@ -1,4 +1,4 @@
-.PHONY: up down worker beat dashboard dev test discovery
+.PHONY: up down worker beat dashboard dev test discovery frontend deploy-gcp
 
 # Start Redis + Postgres
 up:
@@ -16,11 +16,15 @@ worker:
 beat:
 	uv run celery -A cold_email.celery_app beat --loglevel=info
 
-# Run FastAPI dashboard
+# Run FastAPI dashboard / API server
 dashboard:
 	uv run uvicorn cold_email.api.main:app --reload --port 8000
 
-# Start everything (infra + worker + beat + dashboard)
+# Run Next.js frontend
+frontend:
+	cd frontend && npm run dev
+
+# Start everything (infra + worker + beat + backend dashboard)
 dev:
 	docker compose up -d
 	@echo "Starting worker, beat, and dashboard..."
@@ -35,3 +39,4 @@ discovery:
 # Run tests
 test:
 	uv run pytest
+

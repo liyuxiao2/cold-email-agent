@@ -15,16 +15,16 @@ import logging
 
 from celery import shared_task
 
-from cold_email.workers.constants import DEFAULT_MAX_RETRIES, DEFAULT_RETRY_DELAY
-from cold_email.workers.db_helpers import update_lead_status
+from cold_email.workers.shared.constants import DEFAULT_MAX_RETRIES, DEFAULT_RETRY_DELAY
+from cold_email.workers.shared.db_helpers import update_lead_status
 from cold_email.workers.drafting.constants import ERR_EMPTY_DRAFT, ERR_NO_FOUNDER_EMAIL
 from cold_email.workers.drafting.helpers.db_helpers import (
     commit_draft,
     fetch_pending_drafts,
 )
 from cold_email.workers.drafting.helpers.generation import draft_email
-from cold_email.workers.errors import handle_terminal_failure, handle_transient_failure
-from cold_email.workers.gmail_client import create_draft
+from cold_email.workers.shared.errors import handle_terminal_failure, handle_transient_failure
+from cold_email.workers.shared.gmail_client import create_draft
 
 logger = logging.getLogger(__name__)
 
