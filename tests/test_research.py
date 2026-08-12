@@ -1,5 +1,7 @@
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from cold_email.database import Lead
 from cold_email.workers.research.helpers.extraction import (
     call_gemini,
@@ -27,39 +29,27 @@ def test_select_best_url():
 
 def test_find_company_url():
     lead = Lead(company_name="Acme Corp", funding_stage="Seed")
-    mock_response = MagicMock()
-    mock_response.status_code = 200
-    mock_response.json.return_value = {"web": {"results": [{"url": "https://acme.com"}]}}
-    with patch(
-        "cold_email.workers.research.helpers.extraction.httpx.get", return_value=mock_response
-    ) as mock_get:
+    # DDG returns aggregators alongside the real site; select_best_url picks the
+    # slug-matching homepage and skips the blocklisted LinkedIn result.
+    ddg_results = [
+        {"href": "https://linkedin.com/company/acme", "title": "Acme | LinkedIn"},
+        {"href": "https://acmecorp.com/about", "title": "Acme Corp"},
+    ]
+    with patch("cold_email.workers.research.helpers.extraction.DDGS") as MockDDGS:
+        MockDDGS.return_value.text.return_value = ddg_results
         url = find_company_url(lead)
-        mock_get.assert_called_once()
-        assert url == "https://acme.com"
+        MockDDGS.return_value.text.assert_called_once()
+        assert url == "https://acmecorp.com/about"
 
 
-def test_find_company_url_raises_on_api_error():
-    """A non-200 from Brave (e.g. 402 quota, 429 rate limit) must raise so the
-    task retries — not collapse to None and terminally fail the lead."""
-    import httpx
-
+def test_find_company_url_propagates_search_errors():
+    """A transient DDG failure (rate limit/network) must propagate so the task
+    retries — not collapse to None and terminally fail the lead."""
     lead = Lead(company_name="Acme Corp", funding_stage="Seed")
-    mock_response = MagicMock()
-    mock_response.status_code = 402
-    mock_response.text = '{"type":"ErrorResponse","error":"quota exceeded"}'
-    mock_response.raise_for_status.side_effect = httpx.HTTPStatusError(
-        "402", request=MagicMock(), response=mock_response
-    )
-    with patch(
-        "cold_email.workers.research.helpers.extraction.httpx.get", return_value=mock_response
-    ):
-        try:
+    with patch("cold_email.workers.research.helpers.extraction.DDGS") as MockDDGS:
+        MockDDGS.return_value.text.side_effect = RuntimeError("rate limited")
+        with pytest.raises(RuntimeError):
             find_company_url(lead)
-            assert False, "expected find_company_url to raise on HTTP 402"
-        except httpx.HTTPStatusError:
-            pass
-        # It must NOT reach the json()/parse path on a non-200.
-        mock_response.json.assert_not_called()
 
 
 def test_call_gemini_uses_models_generate_content():

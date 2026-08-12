@@ -20,7 +20,6 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     instantly_api_key: str = ""
     instantly_campaign_id: str = ""
-    brave_api_key: str = ""
     gemini_api_key: str = ""
 
     # Gmail API — OAuth2 refresh-token flow (single sender mailbox)
