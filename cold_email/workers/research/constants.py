@@ -11,9 +11,25 @@ AGGREGATOR_BLOCKLIST = {
     "bloomberg.com",
     "forbes.com",
     "angel.co",
+    "wellfound.com",
     "pitchbook.com",
     "producthunt.com",
     "venturebeat.com",
+    # Accelerators / directories / social / reference — never a company homepage,
+    # and observed being wrongly resolved as one (techstars.com hit 9x in prod).
+    "techstars.com",
+    "500.co",
+    "tracxn.com",
+    "f6s.com",
+    "builtin.com",
+    "glassdoor.com",
+    "wikipedia.org",
+    "youtube.com",
+    "medium.com",
+    "github.com",
+    "facebook.com",
+    "instagram.com",
+    "reddit.com",
 }
 
 # URL-discovery search settings. Fetch several candidates because the top hit
@@ -38,10 +54,8 @@ GEMINI_MODEL_NAME = settings.model_name
 JSON_BLOCK_START_MARKER = "```json"
 JSON_BLOCK_END_MARKER = "```"
 
-# Regex and Scoring constants
+# Slug used to match a company name against a candidate domain.
 SLUG_CLEANUP_REGEX = r"[^a-z0-9]"
-DOMAIN_MATCH_SCORE = 1
-DOMAIN_MISMATCH_SCORE = 0
 
 HUNTER_EMAIL_FINDER_URL = "https://api.hunter.io/v2/email-finder"
 HUNTER_TIMEOUT_SECONDS = 15

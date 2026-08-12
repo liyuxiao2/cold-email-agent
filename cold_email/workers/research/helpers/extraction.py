@@ -23,8 +23,6 @@ from cold_email.prompts.research import (
 )
 from cold_email.workers.research.constants import (
     AGGREGATOR_BLOCKLIST,
-    DOMAIN_MATCH_SCORE,
-    DOMAIN_MISMATCH_SCORE,
     HTTP_STATUS_OK,
     JSON_BLOCK_END_MARKER,
     JSON_BLOCK_START_MARKER,
@@ -58,27 +56,30 @@ def find_company_url(lead: Lead) -> str | None:
 
 
 def select_best_url(results: list[dict], lead: Lead) -> str | None:
-    """Score search results and return the URL most likely to be the company homepage."""
-    if not results:
+    """Return the first result whose domain slug-matches the company, else None.
+
+    Only a domain that actually contains the company's name slug is treated as
+    the homepage. A non-matching top result is very often an aggregator,
+    accelerator, or news/reference page (Techstars, Crunchbase, Wikipedia), and
+    returning it would cascade a wrong domain into scraping, LLM extraction, and
+    the Hunter email lookup — and risk emailing the wrong person. When nothing
+    matches, return None so the lead fails honestly as "no company URL" rather
+    than on a guess. Results are already in search-relevance order.
+    """
+    company_slug = re.sub(SLUG_CLEANUP_REGEX, "", lead.company_name.lower())
+    if not company_slug:
         return None
 
-    company_slug = re.sub(SLUG_CLEANUP_REGEX, "", lead.company_name.lower())
-
-    scored: list[tuple[int, str]] = []
     for result in results:
         url = result.get("url", "")
         domain = urlparse(url).netloc.lower().removeprefix("www.")
         if any(blocked in domain for blocked in AGGREGATOR_BLOCKLIST):
             continue
         domain_slug = re.sub(SLUG_CLEANUP_REGEX, "", domain)
-        score = DOMAIN_MATCH_SCORE if company_slug in domain_slug else DOMAIN_MISMATCH_SCORE
-        scored.append((score, url))
+        if company_slug in domain_slug:
+            return url
 
-    if not scored:
-        return results[0].get("url")
-
-    scored.sort(key=lambda x: x[0], reverse=True)
-    return scored[0][1]
+    return None
 
 
 def scrape_website(lead_url: str) -> str:

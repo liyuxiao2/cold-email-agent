@@ -27,6 +27,20 @@ def test_select_best_url():
     assert best_url == "https://acmecorp.com/about"
 
 
+def test_select_best_url_returns_none_when_no_domain_matches():
+    """Regression: when no candidate domain slug-matches the company, return None
+    instead of guessing the top result. In prod, guessing resolved accelerator /
+    reference pages (techstars.com, wikipedia.org) as the 'homepage', which then
+    failed the downstream Hunter email lookup at the wrong domain."""
+    lead = Lead(company_name="Acme Corp")
+    results = [
+        {"url": "https://www.techstars.com/portfolio/acme"},
+        {"url": "https://en.wikipedia.org/wiki/Acme_Corp"},
+        {"url": "https://someunrelatedsite.com/acme"},
+    ]
+    assert select_best_url(results, lead) is None
+
+
 def test_find_company_url():
     lead = Lead(company_name="Acme Corp", funding_stage="Seed")
     # DDG returns aggregators alongside the real site; select_best_url picks the
