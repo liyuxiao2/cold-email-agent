@@ -63,9 +63,16 @@ def drafting_task(self) -> dict:
     for row in pending:
         lead_id = row.lead_id
 
-        # Terminal: can't email a lead with no address.
+        # Terminal: can't email a lead with no address. With Hunter email-finding
+        # at the research stage this is now a backstop — most no-email leads fail
+        # fast earlier — but a lead drafted before that gate still gets caught here.
         if not row.founder_email:
-            handle_terminal_failure(lead_id, ERR_NO_FOUNDER_EMAIL)
+            handle_terminal_failure(
+                lead_id,
+                ERR_NO_FOUNDER_EMAIL,
+                stage="drafting",
+                task_name="cold_email.workers.drafting.drafting_task",
+            )
             continue
 
         try:
@@ -77,7 +84,12 @@ def drafting_task(self) -> dict:
 
             # Terminal: a blank or malformed draft isn't worth retrying blindly.
             if not draft.get("subject") or not draft.get("body"):
-                handle_terminal_failure(lead_id, ERR_EMPTY_DRAFT)
+                handle_terminal_failure(
+                    lead_id,
+                    ERR_EMPTY_DRAFT,
+                    stage="drafting",
+                    task_name="cold_email.workers.drafting.drafting_task",
+                )
                 continue
 
             gmail_draft_id = create_draft(

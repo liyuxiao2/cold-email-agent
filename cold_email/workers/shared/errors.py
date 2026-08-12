@@ -12,15 +12,22 @@ outcomes. Centralizing them keeps that distinction consistent everywhere:
 
 import logging
 
-from cold_email.workers.shared.db_helpers import update_lead_status
+from cold_email.workers.shared.db_helpers import record_dead_letter, update_lead_status
 
 logger = logging.getLogger(__name__)
 
 
-def handle_terminal_failure(lead_id: str, reason: str) -> None:
-    """Mark a lead 'failed' with a reason; it exits the pipeline for good."""
+def handle_terminal_failure(lead_id: str, reason: str, *, stage: str, task_name: str) -> None:
+    """Mark a lead 'failed' and dead-letter it for later retry.
+
+    Terminal failures leave the lead's current state and land in the DLQ
+    (dead_letter table) so they're visible on the lead AND independently
+    retryable. `stage`/`task_name` let the DLQ retry re-dispatch to the right
+    worker.
+    """
     update_lead_status(lead_id, "failed", error_msg=reason)
-    logger.warning(f"Lead {lead_id} marked failed: {reason}")
+    record_dead_letter(lead_id, task_name=task_name, stage=stage, error_msg=reason)
+    logger.warning(f"Lead {lead_id} marked failed and dead-lettered ({stage}): {reason}")
 
 
 def handle_transient_failure(lead_id: str, error: Exception | str) -> None:

@@ -62,6 +62,26 @@ class Draft(Base):
     lead = relationship("Lead", back_populates="drafts")
 
 
+class DeadLetter(Base):
+    """Dead-letter queue: one row per task that terminally failed.
+
+    Written by handle_terminal_failure (the single failure choke point) so every
+    permanently-failed lead lands here with enough context to be re-dispatched.
+    `stage` maps the row back to the worker that should retry it.
+    """
+
+    __tablename__ = "dead_letter"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    lead_id = Column(UUID(as_uuid=True), ForeignKey("leads.id", ondelete="CASCADE"))
+    task_name = Column(String, nullable=False)
+    stage = Column(String, nullable=False)  # research | drafting | logistics
+    error_msg = Column(Text)
+    retry_count = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    last_retried_at = Column(DateTime(timezone=True))
+
+
 # Async engine — FastAPI uses this
 async_engine = create_async_engine(settings.database_url, echo=False)
 AsyncSessionLocal = async_sessionmaker(async_engine, expire_on_commit=False)
