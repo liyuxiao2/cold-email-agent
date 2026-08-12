@@ -14,6 +14,12 @@ class ResearchExtraction(BaseModel):
     they double as extraction instructions.
     """
 
+    founder_name: str = Field(
+        description=(
+            "Full name of the founder or CEO if identifiable from the content "
+            "(e.g. an about/team page). Empty string if not found — do not guess."
+        )
+    )
     tech_stack: list[str] = Field(
         description=(
             "Technologies mentioned or strongly implied "

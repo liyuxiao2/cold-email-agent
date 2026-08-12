@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     instantly_campaign_id: str = ""
     gemini_api_key: str = ""
     groq_api_key: str = ""
+    hunter_api_key: str = ""
 
     # Gmail API — OAuth2 refresh-token flow (single sender mailbox)
     gmail_client_id: str = ""

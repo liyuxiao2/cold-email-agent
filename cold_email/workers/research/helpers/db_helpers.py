@@ -19,6 +19,22 @@ def fetch_lead(lead_id: str) -> Lead | None:
     return lead
 
 
+def save_founder_contact(lead_id: str, founder_name: str | None, founder_email: str) -> None:
+    """Persist the founder email (and name, if research found one) on the lead.
+
+    founder_email is what drafting requires; we also backfill founder_name when
+    research resolved a better one than discovery had, for email personalization.
+    """
+    with get_sync_session() as session:
+        lead = session.get(Lead, lead_id)
+        if lead:
+            lead.founder_email = founder_email
+            if founder_name:
+                lead.founder_name = founder_name
+            session.commit()
+            logger.info(f"Founder contact saved for lead {lead_id}: {founder_email}")
+
+
 def commit_research(
     lead_id: str,
     tech_stack: list | None,
