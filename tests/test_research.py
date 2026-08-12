@@ -1,12 +1,11 @@
 from unittest.mock import MagicMock, patch
 
+from cold_email.database import Lead
 from cold_email.workers.research.helpers.extraction import (
     find_company_url,
     scrape_website,
     select_best_url,
 )
-
-from cold_email.database import Lead
 from cold_email.workers.research.research import research_task
 
 FAKE_UUID = "00000000-0000-0000-0000-000000000000"

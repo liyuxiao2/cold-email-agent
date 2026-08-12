@@ -13,12 +13,11 @@ import logging
 from celery import shared_task
 
 from cold_email.workers.constants import DEFAULT_MAX_RETRIES, DEFAULT_RETRY_DELAY
+from cold_email.workers.db_helpers import update_lead_status
+from cold_email.workers.errors import handle_terminal_failure
 from cold_email.workers.gmail_client import send_draft
 from cold_email.workers.logistics.constants import ERR_NO_GMAIL_DRAFT
-from cold_email.workers.logistics.helpers.db_helpers import (
-    fetch_send_inputs,
-    update_lead_status,
-)
+from cold_email.workers.logistics.helpers.db_helpers import fetch_send_inputs
 
 logger = logging.getLogger(__name__)
 
@@ -43,13 +42,12 @@ def logistics_task(self, lead_id: str) -> dict:
         logger.info(f"Lead {lead_id} not pending send; skipping")
         return {"status": "skipped", "reason": "lead not pending send"}
 
-    if not inputs.get("gmail_draft_id"):
-        update_lead_status(lead_id, "failed", error_msg=ERR_NO_GMAIL_DRAFT)
-        logger.warning(f"Lead {lead_id} approved but has no gmail_draft_id")
+    if not inputs.gmail_draft_id:
+        handle_terminal_failure(lead_id, ERR_NO_GMAIL_DRAFT)
         return {"status": "failed", "error": ERR_NO_GMAIL_DRAFT}
 
     # A transient Gmail error here raises → Celery retries this single lead.
-    send_draft(inputs["gmail_draft_id"])
+    send_draft(inputs.gmail_draft_id)
     update_lead_status(lead_id, "sent")
 
     return {"status": "success"}

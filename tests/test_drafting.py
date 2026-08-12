@@ -1,7 +1,7 @@
 from unittest.mock import patch
 
 from cold_email.workers.drafting.drafting import drafting_task
-from cold_email.workers.drafting.helpers.db_helpers import PendingDraft
+from cold_email.workers.views import PendingDraft
 
 LEAD_A = "00000000-0000-0000-0000-00000000000a"
 LEAD_B = "00000000-0000-0000-0000-00000000000b"
@@ -63,14 +63,16 @@ def test_drafting_skips_lead_without_email():
             return_value=[_pending_row(LEAD_A, founder_email=None)],
         ),
         patch("cold_email.workers.drafting.drafting.draft_email") as mock_draft,
-        patch("cold_email.workers.drafting.drafting.update_lead_status") as mock_status,
+        patch(
+            "cold_email.workers.drafting.drafting.handle_terminal_failure"
+        ) as mock_terminal,
     ):
         result = drafting_task.apply(args=[]).get(propagate=True)
 
     assert result == {"status": "success", "drafted": 0}
     mock_draft.assert_not_called()
-    mock_status.assert_called_once()
-    assert mock_status.call_args.args[:2] == (LEAD_A, "failed")
+    mock_terminal.assert_called_once()
+    assert mock_terminal.call_args.args[0] == LEAD_A
 
 
 def test_drafting_marks_empty_draft_failed():
@@ -82,13 +84,15 @@ def test_drafting_marks_empty_draft_failed():
         ),
         patch("cold_email.workers.drafting.drafting.draft_email", return_value={}),
         patch("cold_email.workers.drafting.drafting.create_draft") as mock_create,
-        patch("cold_email.workers.drafting.drafting.update_lead_status") as mock_status,
+        patch(
+            "cold_email.workers.drafting.drafting.handle_terminal_failure"
+        ) as mock_terminal,
     ):
         result = drafting_task.apply(args=[]).get(propagate=True)
 
     assert result == {"status": "success", "drafted": 0}
     mock_create.assert_not_called()
-    assert mock_status.call_args.args[:2] == (LEAD_A, "failed")
+    assert mock_terminal.call_args.args[0] == LEAD_A
 
 
 def test_drafting_one_bad_lead_does_not_abort_sweep():

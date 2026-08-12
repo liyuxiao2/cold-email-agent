@@ -1,3 +1,5 @@
+from cold_email.config import settings
+
 EMAIL_DRAFT_SYSTEM = (
     "You write cold emails for software engineers reaching out to potential employers. "
     "The emails are peer-to-peer, specific, and short. You never use filler openers. "
@@ -32,23 +34,27 @@ EMAIL_DRAFT_TOOL = {
 }
 
 
+# startups.gallery leads are founders and there's no title column upstream.
+RECIPIENT_TITLE = "Founder"
+
+
 def build_email_draft_messages(
-    sender_name: str,
-    sender_role: str,
-    sender_company: str,
     founder_name: str,
-    founder_title: str,
     company_name: str,
     tech_stack: list[str],
     recent_news: str,
     hook: str,
 ) -> list[dict]:
+    """Build the drafting prompt. Sender identity comes from settings and the
+    recipient title is defaulted, so callers only pass the recipient/research
+    fields."""
     return [
         {
             "role": "user",
             "content": (
-                f"Sender: {sender_name}, {sender_role} at {sender_company}\n"
-                f"Recipient: {founder_name}, {founder_title} at {company_name}\n"
+                f"Sender: {settings.sender_name}, {settings.sender_role} "
+                f"at {settings.sender_company}\n"
+                f"Recipient: {founder_name}, {RECIPIENT_TITLE} at {company_name}\n"
                 f"Tech stack: {', '.join(tech_stack)}\n"
                 f"Recent news: {recent_news}\n"
                 f"Hook: {hook}\n\n"

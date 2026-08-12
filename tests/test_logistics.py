@@ -1,6 +1,7 @@
 from unittest.mock import patch
 
 from cold_email.workers.logistics.logistics import logistics_task
+from cold_email.workers.views import PendingSend
 
 LEAD_ID = "00000000-0000-0000-0000-000000000000"
 
@@ -26,13 +27,13 @@ def test_logistics_sends_existing_draft():
     with (
         patch(
             "cold_email.workers.logistics.logistics.fetch_send_inputs",
-            return_value={
-                "lead_id": LEAD_ID,
-                "founder_email": "founder@acme.com",
-                "gmail_draft_id": "gmail-123",
-                "subject_line": "Hi",
-                "body": "Body",
-            },
+            return_value=PendingSend(
+                lead_id=LEAD_ID,
+                founder_email="founder@acme.com",
+                gmail_draft_id="gmail-123",
+                subject_line="Hi",
+                body="Body",
+            ),
         ),
         patch(
             "cold_email.workers.logistics.logistics.send_draft", return_value="msg-1"
@@ -51,13 +52,21 @@ def test_logistics_fails_without_gmail_draft_id():
     with (
         patch(
             "cold_email.workers.logistics.logistics.fetch_send_inputs",
-            return_value={"lead_id": LEAD_ID, "gmail_draft_id": None},
+            return_value=PendingSend(
+                lead_id=LEAD_ID,
+                founder_email="founder@acme.com",
+                gmail_draft_id=None,
+                subject_line="Hi",
+                body="Body",
+            ),
         ),
         patch("cold_email.workers.logistics.logistics.send_draft") as mock_send,
-        patch("cold_email.workers.logistics.logistics.update_lead_status") as mock_status,
+        patch(
+            "cold_email.workers.logistics.logistics.handle_terminal_failure"
+        ) as mock_terminal,
     ):
         result = logistics_task.apply(args=[LEAD_ID]).get(propagate=True)
 
     assert result["status"] == "failed"
     mock_send.assert_not_called()
-    assert mock_status.call_args.args[:2] == (LEAD_ID, "failed")
+    assert mock_terminal.call_args.args[0] == LEAD_ID
