@@ -266,3 +266,41 @@ async def trigger_drafting_api():
         logger.error(f"Failed to queue drafting task: {e}\n{tb}")
         raise HTTPException(status_code=500, detail=f"Failed to queue drafting task: {e} | Traceback: {tb}") from e
 
+
+@router.post("/pipeline/research")
+async def trigger_research_api(
+    session: AsyncSession = Depends(get_async_session),
+):
+    """Re-dispatch research for leads that never advanced past discovery.
+
+    Discovery only enqueues research for brand-new leads, so any lead that was
+    found while the worker was down — or that terminally failed on a transient
+    problem (e.g. a missing BRAVE_API_KEY) — is orphaned in the DB and never
+    retried. This endpoint requeues those leads through the research worker.
+    """
+    from cold_email.workers.research import research_task
+
+    # 'found' leads never got researched; 'failed' leads hit a terminal error
+    # (often transient — e.g. the missing Brave key). Retry both.
+    result = await session.execute(
+        select(Lead).where(Lead.status.in_(["found", "failed"]))
+    )
+    leads = result.scalars().all()
+
+    requeued_ids: list[str] = []
+    for lead in leads:
+        # Reset a failed lead to a clean slate so the next attempt records its
+        # own outcome rather than stacking on the old error.
+        if lead.status == "failed":
+            lead.status = "found"
+            lead.error_msg = None
+        requeued_ids.append(str(lead.id))
+
+    await session.commit()
+
+    for lead_id in requeued_ids:
+        research_task.delay(lead_id)
+
+    logger.info(f"Requeued {len(requeued_ids)} leads for research")
+    return {"success": True, "requeued": len(requeued_ids), "lead_ids": requeued_ids}
+
