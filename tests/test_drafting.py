@@ -46,6 +46,7 @@ def test_drafting_sweep_happy_path():
         ) as mock_create,
         patch("cold_email.workers.drafting.drafting.commit_draft") as mock_commit,
         patch("cold_email.workers.drafting.drafting.update_lead_status") as mock_status,
+        patch("cold_email.workers.drafting.drafting.time.sleep"),
     ):
         result = drafting_task.apply(args=[]).get(propagate=True)
 
@@ -87,6 +88,7 @@ def test_drafting_marks_empty_draft_failed():
         patch(
             "cold_email.workers.drafting.drafting.handle_terminal_failure"
         ) as mock_terminal,
+        patch("cold_email.workers.drafting.drafting.time.sleep"),
     ):
         result = drafting_task.apply(args=[]).get(propagate=True)
 
@@ -113,6 +115,7 @@ def test_drafting_one_bad_lead_does_not_abort_sweep():
         ),
         patch("cold_email.workers.drafting.drafting.commit_draft"),
         patch("cold_email.workers.drafting.drafting.update_lead_status") as mock_status,
+        patch("cold_email.workers.drafting.drafting.time.sleep"),
     ):
         result = drafting_task.apply(args=[]).get(propagate=True)
 

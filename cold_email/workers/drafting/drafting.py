@@ -12,6 +12,7 @@ Shared failure handling lives in cold_email.workers.shared.errors.
 """
 
 import logging
+import time
 
 from celery import shared_task
 
@@ -21,7 +22,11 @@ from cold_email.workers.drafting.helpers.db_helpers import (
     fetch_pending_drafts,
 )
 from cold_email.workers.drafting.helpers.generation import draft_email
-from cold_email.workers.shared.constants import DEFAULT_MAX_RETRIES, DEFAULT_RETRY_DELAY
+from cold_email.workers.shared.constants import (
+    DEFAULT_MAX_RETRIES,
+    DEFAULT_RETRY_DELAY,
+    GEMINI_MIN_INTERVAL_SECONDS,
+)
 from cold_email.workers.shared.db_helpers import update_lead_status
 from cold_email.workers.shared.errors import handle_terminal_failure, handle_transient_failure
 from cold_email.workers.shared.gmail_client import create_draft
@@ -65,6 +70,10 @@ def drafting_task(self) -> dict:
 
         try:
             draft = draft_email(row)
+            # Pace the batch's Gemini calls under the free-tier 5 req/min cap.
+            # A 429 here is caught below as transient (lead stays 'researched',
+            # retried next sweep), but spacing avoids burning the whole sweep.
+            time.sleep(GEMINI_MIN_INTERVAL_SECONDS)
 
             # Terminal: a blank or malformed draft isn't worth retrying blindly.
             if not draft.get("subject") or not draft.get("body"):

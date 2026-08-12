@@ -17,7 +17,11 @@ from cold_email.workers.research.helpers.extraction import (
     scrape_website,
 )
 from cold_email.workers.research.helpers.preflight import resolve_lead_url
-from cold_email.workers.shared.constants import DEFAULT_MAX_RETRIES, DEFAULT_RETRY_DELAY
+from cold_email.workers.shared.constants import (
+    DEFAULT_MAX_RETRIES,
+    DEFAULT_RETRY_DELAY,
+    GEMINI_RATE_LIMIT,
+)
 from cold_email.workers.shared.db_helpers import update_lead_status
 
 logger = logging.getLogger(__name__)
@@ -28,6 +32,9 @@ logger = logging.getLogger(__name__)
     autoretry_for=(Exception,),
     max_retries=DEFAULT_MAX_RETRIES,
     default_retry_delay=DEFAULT_RETRY_DELAY,
+    # Pace per-lead Gemini calls under the free-tier 5 req/min cap so a burst
+    # of requeued leads doesn't 429 itself into repeated retries.
+    rate_limit=GEMINI_RATE_LIMIT,
     name="cold_email.workers.research.research_task",
 )
 def research_task(self, lead_id: str) -> dict:
