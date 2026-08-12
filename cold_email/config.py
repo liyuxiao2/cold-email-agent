@@ -78,10 +78,21 @@ class Settings(BaseSettings):
 
     cors_origins: list[str] = ["*"]
 
-    # Default Gemini model for research extraction + email drafting. Overridable
-    # via the MODEL_NAME env var (no redeploy needed). Uses the maintained
-    # `-latest` alias so a retired model version can't 404 the pipeline.
     model_name: str = "gemini-flash-latest"
+
+    # Ordered most-generous-first (RPM/RPD). Verified available on this key —
+    # the 2.5-era models and gemini-3-flash 404 (retired / not real names) and
+    # were dropped; generate_with_fallback also skips any that 404 at runtime.
+    #   gemini-3.5-flash-lite   15 RPM / 500 RPD
+    #   gemini-3.1-flash-lite   15 RPM / 500 RPD
+    #   gemini-3.6-flash         8 RPM /  20 RPD
+    #   gemini-3.5-flash         5 RPM /  20 RPD
+    model_fallback_chain: list[str] = [
+        "gemini-3.5-flash-lite",
+        "gemini-3.1-flash-lite",
+        "gemini-3.6-flash",
+        "gemini-3.5-flash",
+    ]
 
 
 settings = Settings()

@@ -67,8 +67,10 @@ def test_call_gemini_uses_models_generate_content():
     mock_client = MagicMock()
     mock_client.models.generate_content.return_value = fake_response
 
+    # genai.Client now lives in the shared fallback wrapper that call_gemini
+    # routes through.
     with patch(
-        "cold_email.workers.research.helpers.extraction.genai.Client",
+        "cold_email.workers.shared.llm.genai.Client",
         return_value=mock_client,
     ):
         response = call_gemini("scraped text", "Acme Corp")

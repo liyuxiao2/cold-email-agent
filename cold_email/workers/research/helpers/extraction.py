@@ -13,7 +13,6 @@ import requests
 from bs4 import BeautifulSoup
 from ddgs import DDGS
 from firecrawl import FirecrawlApp
-from google import genai
 
 from cold_email.config import settings
 from cold_email.database import Lead
@@ -26,7 +25,6 @@ from cold_email.workers.research.constants import (
     AGGREGATOR_BLOCKLIST,
     DOMAIN_MATCH_SCORE,
     DOMAIN_MISMATCH_SCORE,
-    GEMINI_MODEL_NAME,
     HTTP_STATUS_OK,
     JSON_BLOCK_END_MARKER,
     JSON_BLOCK_START_MARKER,
@@ -37,6 +35,7 @@ from cold_email.workers.research.constants import (
     SEARCH_RESULT_COUNT,
     SLUG_CLEANUP_REGEX,
 )
+from cold_email.workers.shared.llm import generate_with_fallback
 
 logger = logging.getLogger(__name__)
 
@@ -111,10 +110,12 @@ def scrape_website(lead_url: str) -> str:
 
 
 def call_gemini(text: str, company_name: str):
-    """Send scraped content to Gemini and return the raw model response."""
-    client = genai.Client(api_key=settings.gemini_api_key)
-    return client.models.generate_content(
-        model=GEMINI_MODEL_NAME,
+    """Send scraped content to Gemini and return the raw model response.
+
+    Routes through generate_with_fallback so an exhausted model quota advances
+    to the next model in the chain instead of failing the lead.
+    """
+    return generate_with_fallback(
         contents=build_extraction_messages(company_name=company_name, scraped_content=text),
         config={
             "system_instruction": EXTRACTION_SYSTEM,
