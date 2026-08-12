@@ -37,8 +37,9 @@ SCRAPE_EXCLUDE_TAGS = ["script", "style", "footer", "nav", "iframe", "aside", "f
 # HTTP settings
 HTTP_STATUS_OK = 200
 
-# Model settings
-GEMINI_MODEL_NAME = "gemini-2.5-flash"
+# Model settings — defaults to the shared config value; override with a literal
+# here to let research diverge from drafting on model choice.
+GEMINI_MODEL_NAME = settings.model_name
 
 # JSON formatting extraction markers
 JSON_BLOCK_START_MARKER = "```json"
