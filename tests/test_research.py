@@ -125,3 +125,26 @@ def test_research_task_lead_not_found():
     with patch("cold_email.workers.research.helpers.preflight.fetch_lead", return_value=None):
         result = research_task.apply(args=[FAKE_UUID]).get(propagate=True)
         assert result == {"status": "failed", "error": "Lead not found"}
+
+
+def test_research_task_persists_raw_llm_text():
+    """Regression: call_gemini returns a plain JSON string (not an object with
+    .text), so the task must persist that string as raw_content. The old code
+    did `response.text` and crashed with AttributeError in prod."""
+    resolution = MagicMock(failure=None, url="https://acme.com")
+    resolution.lead = Lead(company_name="Acme")
+    raw = '{"tech_stack": ["Python"], "recent_news": "Seed", "hook": "Ledger"}'
+
+    module = "cold_email.workers.research.research"
+    with (
+        patch(f"{module}.resolve_lead_url", return_value=resolution),
+        patch(f"{module}.scrape_website", return_value="scraped"),
+        patch(f"{module}.call_gemini", return_value=raw),
+        patch(f"{module}.commit_research") as commit,
+        patch(f"{module}.update_lead_status"),
+    ):
+        result = research_task.apply(args=[FAKE_UUID]).get(propagate=True)
+
+    assert result == {"status": "success"}
+    assert commit.call_args.kwargs["raw_content"] == raw
+    assert commit.call_args.kwargs["tech_stack"] == ["Python"]

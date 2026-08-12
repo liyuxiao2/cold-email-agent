@@ -56,15 +56,15 @@ def research_task(self, lead_id: str) -> dict:
     lead, lead_url = resolution.lead, resolution.url
 
     text = scrape_website(lead_url)
-    response = call_gemini(text, lead.company_name)
-    research_dict = parse_gemini_response(response)
+    raw = call_gemini(text, lead.company_name)
+    research_dict = parse_gemini_response(raw)
 
     commit_research(
         lead_id=lead_id,
         tech_stack=research_dict.get("tech_stack"),
         recent_news=research_dict.get("recent_news"),
         hook=research_dict.get("hook"),
-        raw_content=response.text,
+        raw_content=raw,
     )
 
     update_lead_status(lead_id, status="researched")
