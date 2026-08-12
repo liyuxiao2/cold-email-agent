@@ -59,6 +59,16 @@ def find_company_url(lead: Lead) -> str | None:
         headers=BRAVE_SEARCH_HEADERS,
         timeout=BRAVE_SEARCH_TIMEOUT,
     )
+    # Surface API-level failures (402 quota exhausted, 429 rate limit, 5xx) as
+    # raised errors so Celery retries them. Otherwise a non-200 body has no
+    # "web" key, collapses to [], and the lead is terminally marked "failed" —
+    # a transient billing/rate problem masquerading as an unfindable company.
+    if response.status_code != HTTP_STATUS_OK:
+        logger.error(
+            f"Brave Search returned HTTP {response.status_code} for "
+            f"{lead.company_name}: {response.text[:200]}"
+        )
+        response.raise_for_status()
     results = response.json().get("web", {}).get("results", [])
     logger.info(f"Brave Search results for finding {lead.company_name}: {results}")
     return select_best_url(results, lead)
