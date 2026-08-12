@@ -74,9 +74,6 @@ def research_task(self, lead_id: str) -> dict:
         raw_content=raw,
     )
 
-    # Resolve the founder's email via Hunter (research has the name + domain;
-    # the directory sources never carried an address). Fail fast into the DLQ
-    # if we can't get a usable one, so the lead never wastes the drafting stage.
     founder_name = research_dict.get("founder_name") or lead.founder_name
     domain = domain_from_url(lead.company_url or lead_url)
     email_result = find_email(founder_name, domain)

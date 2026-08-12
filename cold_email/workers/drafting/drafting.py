@@ -63,9 +63,6 @@ def drafting_task(self) -> dict:
     for row in pending:
         lead_id = row.lead_id
 
-        # Terminal: can't email a lead with no address. With Hunter email-finding
-        # at the research stage this is now a backstop — most no-email leads fail
-        # fast earlier — but a lead drafted before that gate still gets caught here.
         if not row.founder_email:
             handle_terminal_failure(
                 lead_id,
@@ -77,12 +74,8 @@ def drafting_task(self) -> dict:
 
         try:
             draft = draft_email(row)
-            # Pace the batch's Gemini calls under the free-tier 5 req/min cap.
-            # A 429 here is caught below as transient (lead stays 'researched',
-            # retried next sweep), but spacing avoids burning the whole sweep.
             time.sleep(GEMINI_MIN_INTERVAL_SECONDS)
 
-            # Terminal: a blank or malformed draft isn't worth retrying blindly.
             if not draft.get("subject") or not draft.get("body"):
                 handle_terminal_failure(
                     lead_id,
@@ -107,7 +100,6 @@ def drafting_task(self) -> dict:
             drafted += 1
 
         except Exception as exc:
-            # Transient: leave at 'researched' so the next sweep picks it up.
             handle_transient_failure(lead_id, exc)
 
     return {"status": "success", "drafted": drafted}
