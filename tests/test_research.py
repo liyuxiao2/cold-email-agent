@@ -6,13 +6,44 @@ from cold_email.database import Lead
 from cold_email.workers.research.helpers.extraction import (
     call_gemini,
     find_company_url,
+    is_probable_homepage,
     parse_gemini_response,
     scrape_website,
     select_best_url,
 )
+from cold_email.workers.research.helpers.preflight import resolve_lead_url
 from cold_email.workers.research.research import research_task
 
 FAKE_UUID = "00000000-0000-0000-0000-000000000000"
+
+
+def test_is_probable_homepage():
+    # Slug-matching, non-aggregator domain is the homepage.
+    assert is_probable_homepage("https://acmecorp.com/about", "Acme Corp") is True
+    # Aggregators/accelerators are rejected even if they'd slug-match otherwise.
+    assert is_probable_homepage("https://techstars.com/acme", "Acme") is False
+    assert is_probable_homepage("https://linkedin.com/company/acme", "Acme") is False
+    # Domain that doesn't contain the company slug is rejected.
+    assert is_probable_homepage("https://someothersite.com", "Acme Corp") is False
+    assert is_probable_homepage(None, "Acme") is False
+
+
+def test_resolve_lead_url_rejects_aggregator_company_url():
+    """A discovery company_url pointing at an aggregator must NOT be trusted;
+    resolve_lead_url falls back to the slug-matched DDG search instead."""
+    lead = Lead(company_name="Acme", company_url="https://techstars.com/companies/acme")
+    with (
+        patch("cold_email.workers.research.helpers.preflight.fetch_lead", return_value=lead),
+        patch(
+            "cold_email.workers.research.helpers.preflight.find_company_url",
+            return_value="https://acme.com",
+        ) as find,
+    ):
+        resolution = resolve_lead_url(FAKE_UUID)
+
+    # The aggregator company_url was rejected; the DDG fallback URL is used.
+    assert resolution.url == "https://acme.com"
+    find.assert_called_once()
 
 
 def test_select_best_url():

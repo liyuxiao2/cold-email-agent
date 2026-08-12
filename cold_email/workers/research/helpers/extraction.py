@@ -55,30 +55,38 @@ def find_company_url(lead: Lead) -> str | None:
     return select_best_url(candidates, lead)
 
 
-def select_best_url(results: list[dict], lead: Lead) -> str | None:
-    """Return the first result whose domain slug-matches the company, else None.
+def is_probable_homepage(url: str | None, company_name: str) -> bool:
+    """True if `url`'s domain looks like `company_name`'s own homepage.
 
-    Only a domain that actually contains the company's name slug is treated as
-    the homepage. A non-matching top result is very often an aggregator,
-    accelerator, or news/reference page (Techstars, Crunchbase, Wikipedia), and
-    returning it would cascade a wrong domain into scraping, LLM extraction, and
-    the Hunter email lookup — and risk emailing the wrong person. When nothing
-    matches, return None so the lead fails honestly as "no company URL" rather
-    than on a guess. Results are already in search-relevance order.
+    A domain qualifies only if it is NOT a known aggregator/accelerator/news
+    site AND its slug contains the company-name slug. Used to validate both the
+    DDG search results and the discovery-scraped company_url, so a wrong domain
+    never cascades into scraping, LLM extraction, or the Hunter email lookup.
     """
-    company_slug = re.sub(SLUG_CLEANUP_REGEX, "", lead.company_name.lower())
+    if not url:
+        return False
+    domain = urlparse(url).netloc.lower().removeprefix("www.")
+    if not domain or any(blocked in domain for blocked in AGGREGATOR_BLOCKLIST):
+        return False
+    company_slug = re.sub(SLUG_CLEANUP_REGEX, "", company_name.lower())
     if not company_slug:
-        return None
+        return False
+    domain_slug = re.sub(SLUG_CLEANUP_REGEX, "", domain)
+    return company_slug in domain_slug
 
+
+def select_best_url(results: list[dict], lead: Lead) -> str | None:
+    """Return the first result that looks like the company's homepage, else None.
+
+    Only a domain that slug-matches the company (and isn't an aggregator) is
+    treated as the homepage — see is_probable_homepage. When nothing matches,
+    return None so the lead fails honestly as "no company URL" rather than on a
+    guess. Results are already in search-relevance order.
+    """
     for result in results:
         url = result.get("url", "")
-        domain = urlparse(url).netloc.lower().removeprefix("www.")
-        if any(blocked in domain for blocked in AGGREGATOR_BLOCKLIST):
-            continue
-        domain_slug = re.sub(SLUG_CLEANUP_REGEX, "", domain)
-        if company_slug in domain_slug:
+        if is_probable_homepage(url, lead.company_name):
             return url
-
     return None
 
 

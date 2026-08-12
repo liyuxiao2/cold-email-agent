@@ -3,7 +3,7 @@ from dataclasses import dataclass
 
 from cold_email.database import Lead
 from cold_email.workers.research.helpers.db_helpers import fetch_lead
-from cold_email.workers.research.helpers.extraction import find_company_url
+from cold_email.workers.research.helpers.extraction import find_company_url, is_probable_homepage
 from cold_email.workers.shared.errors import handle_terminal_failure
 
 logger = logging.getLogger(__name__)
@@ -25,11 +25,21 @@ def resolve_lead_url(lead_id: str) -> LeadResolution:
             failure={"status": "failed", "error": "Lead not found"}
         )
 
-    company_url = lead.company_url or find_company_url(lead)
+    # Trust the discovery-scraped company_url only if it actually looks like the
+    # company's homepage; otherwise (aggregator/news link, or empty) fall back to
+    # a slug-matched DDG search. This keeps a wrong domain from cascading into
+    # scraping, LLM extraction, and the Hunter email lookup.
+    if is_probable_homepage(lead.company_url, lead.company_name):
+        company_url = lead.company_url
+    else:
+        company_url = find_company_url(lead)
 
     if not company_url:
         handle_terminal_failure(
-            lead_id, f"Could not find company URL for {lead.company_name}"
+            lead_id,
+            f"Could not find company URL for {lead.company_name}",
+            stage="research",
+            task_name="cold_email.workers.research.research_task",
         )
         return LeadResolution(
             lead=lead,

@@ -75,7 +75,9 @@ def research_task(self, lead_id: str) -> dict:
     )
 
     founder_name = research_dict.get("founder_name") or lead.founder_name
-    domain = domain_from_url(lead.company_url or lead_url)
+    # lead_url is the validated homepage (slug-matched, non-aggregator); use it
+    # for the Hunter domain rather than the raw discovery company_url.
+    domain = domain_from_url(lead_url)
     email_result = find_email(founder_name, domain)
 
     if not should_accept_email(email_result):
