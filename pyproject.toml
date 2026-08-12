@@ -24,6 +24,7 @@ dependencies = [
     "google-auth-oauthlib>=1.2",
     "google-api-python-client>=2.130",
     "ddgs>=9.14.4",
+    "groq>=1.6.0",
 ]
 
 [dependency-groups]

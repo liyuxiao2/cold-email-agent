@@ -16,7 +16,7 @@ from cold_email.workers.drafting.constants import (
     JSON_BLOCK_END_MARKER,
     JSON_BLOCK_START_MARKER,
 )
-from cold_email.workers.shared.llm import generate_with_fallback
+from cold_email.workers.shared.llm import generate_json
 from cold_email.workers.shared.views import PendingDraft
 
 logger = logging.getLogger(__name__)
@@ -31,12 +31,13 @@ def draft_email(row: PendingDraft) -> dict:
     return parse_email_response(generate_email(row))
 
 
-def generate_email(row: PendingDraft):
-    """Send a pending_drafts row to Gemini and return the raw model response.`
+def generate_email(row: PendingDraft) -> str:
+    """Generate an email draft for a pending_drafts row via the LLM.
 
     `row` is a PendingDraft from the pending_drafts view. Sender identity and the
     recipient title default live in the prompt builder, so we only pass the
-    recipient/research fields here.
+    recipient/research fields here. Returns the model's raw JSON text; provider
+    and model fallback are handled inside generate_json.
     """
     messages = build_email_draft_messages(
         founder_name=row.founder_name or "there",
@@ -45,26 +46,23 @@ def generate_email(row: PendingDraft):
         recent_news=row.recent_news or "",
         hook=row.hook or "",
     )
-    return generate_with_fallback(
-        contents=messages,
-        config={
-            "system_instruction": EMAIL_DRAFT_SYSTEM,
-            "response_mime_type": "application/json",
-            "response_schema": EmailDraft,
-        },
+    return generate_json(
+        system=EMAIL_DRAFT_SYSTEM,
+        prompt=messages,
+        schema=EmailDraft,
     )
 
 
-def parse_email_response(response) -> dict:
-    """Parse {subject, body} from a Gemini response, stripping any ```json fence.
+def parse_email_response(raw: str) -> dict:
+    """Parse {subject, body} from a raw LLM response, stripping any ```json fence.
 
     Returns {} if the response is missing or malformed — the caller treats an
     empty/incomplete draft as a terminal failure for that lead.
     """
-    if not response.text:
+    if not raw:
         return {}
 
-    raw_json = response.text.strip()
+    raw_json = raw.strip()
     if raw_json.startswith(JSON_BLOCK_START_MARKER) and raw_json.endswith(
         JSON_BLOCK_END_MARKER
     ):

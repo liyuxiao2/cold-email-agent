@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     instantly_api_key: str = ""
     instantly_campaign_id: str = ""
     gemini_api_key: str = ""
+    groq_api_key: str = ""
 
     # Gmail API — OAuth2 refresh-token flow (single sender mailbox)
     gmail_client_id: str = ""
@@ -80,18 +81,16 @@ class Settings(BaseSettings):
 
     model_name: str = "gemini-flash-latest"
 
-    # Ordered most-generous-first (RPM/RPD). Verified available on this key —
-    # the 2.5-era models and gemini-3-flash 404 (retired / not real names) and
-    # were dropped; generate_with_fallback also skips any that 404 at runtime.
-    #   gemini-3.5-flash-lite   15 RPM / 500 RPD
-    #   gemini-3.1-flash-lite   15 RPM / 500 RPD
-    #   gemini-3.6-flash         8 RPM /  20 RPD
-    #   gemini-3.5-flash         5 RPM /  20 RPD
+    # Ordered fallback chain for generate_json. Each name is routed to its
+    # provider by _provider_for() in workers/shared/llm.py, so a chain can mix
+    # providers — Groq first (fast, generous free tier), Gemini as a
+    # cross-provider safety net when every Groq model is rate-limited.
+    # Swapping models — even across providers — is just editing this list.
+    # Env override: MODEL_FALLBACK_CHAIN as a JSON array.
     model_fallback_chain: list[str] = [
+        "llama-3.3-70b-versatile",
+        "llama-3.1-8b-instant",
         "gemini-3.5-flash-lite",
-        "gemini-3.1-flash-lite",
-        "gemini-3.6-flash",
-        "gemini-3.5-flash",
     ]
 
 

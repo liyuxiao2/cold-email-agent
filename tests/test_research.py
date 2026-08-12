@@ -53,12 +53,11 @@ def test_find_company_url_propagates_search_errors():
 
 
 def test_call_gemini_uses_models_generate_content():
-    """Regression guard for the google-genai API shape.
+    """Regression guard for the google-genai API shape + provider routing.
 
     generate_content lives on client.models (the service), NOT on the Model
-    object returned by client.models.get(). The old code called
-    client.models.get(...).generate_content(...) and crashed with
-    AttributeError once it was finally exercised in prod.
+    object returned by client.models.get(). With a Gemini model in the chain,
+    call_gemini must route through GeminiProvider and return the raw JSON text.
     """
     fake_response = MagicMock()
     fake_response.text = (
@@ -67,23 +66,22 @@ def test_call_gemini_uses_models_generate_content():
     mock_client = MagicMock()
     mock_client.models.generate_content.return_value = fake_response
 
-    # genai.Client now lives in the shared fallback wrapper that call_gemini
-    # routes through.
-    with patch(
-        "cold_email.workers.shared.llm.genai.Client",
-        return_value=mock_client,
-    ):
-        response = call_gemini("scraped text", "Acme Corp")
+    # Pin the chain to a Gemini model so _provider_for routes to GeminiProvider,
+    # and patch the client the provider constructs.
+    with patch("cold_email.workers.shared.llm.settings.model_fallback_chain",
+               ["gemini-3.5-flash-lite"]), \
+         patch("cold_email.workers.shared.llm.genai.Client", return_value=mock_client):
+        raw = call_gemini("scraped text", "Acme Corp")
 
     mock_client.models.generate_content.assert_called_once()
     mock_client.models.get.assert_not_called()
     # Structured-output config, not the old Anthropic-shaped tools param.
     _, kwargs = mock_client.models.generate_content.call_args
-    assert kwargs["model"]
+    assert kwargs["model"] == "gemini-3.5-flash-lite"
     assert kwargs["config"]["response_mime_type"] == "application/json"
     assert "tools" not in kwargs["config"]
 
-    parsed = parse_gemini_response(response)
+    parsed = parse_gemini_response(raw)
     assert parsed["tech_stack"] == ["Python"]
     assert parsed["hook"] == "Ledger infra"
 

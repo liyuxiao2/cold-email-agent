@@ -35,7 +35,7 @@ from cold_email.workers.research.constants import (
     SEARCH_RESULT_COUNT,
     SLUG_CLEANUP_REGEX,
 )
-from cold_email.workers.shared.llm import generate_with_fallback
+from cold_email.workers.shared.llm import generate_json
 
 logger = logging.getLogger(__name__)
 
@@ -109,31 +109,28 @@ def scrape_website(lead_url: str) -> str:
     return ""
 
 
-def call_gemini(text: str, company_name: str):
-    """Send scraped content to Gemini and return the raw model response.
+def call_gemini(text: str, company_name: str) -> str:
+    """Extract structured research fields from scraped content via the LLM.
 
-    Routes through generate_with_fallback so an exhausted model quota advances
-    to the next model in the chain instead of failing the lead.
+    Routes through generate_json (provider-agnostic): the configured chain
+    handles model/provider fallback. Returns the model's raw JSON text.
     """
-    return generate_with_fallback(
-        contents=build_extraction_messages(company_name=company_name, scraped_content=text),
-        config={
-            "system_instruction": EXTRACTION_SYSTEM,
-            "response_mime_type": "application/json",
-            "response_schema": ResearchExtraction,
-        },
+    return generate_json(
+        system=EXTRACTION_SYSTEM,
+        prompt=build_extraction_messages(company_name=company_name, scraped_content=text),
+        schema=ResearchExtraction,
     )
 
 
-def parse_gemini_response(response) -> dict:
-    """Parse the structured JSON payload from a Gemini model response.
+def parse_gemini_response(raw: str) -> dict:
+    """Parse the structured JSON payload from a raw LLM response string.
 
-    Returns an empty dict if the response text is missing or malformed.
+    Returns an empty dict if the text is missing or malformed.
     """
-    if not response.text:
+    if not raw:
         return {}
 
-    raw_json = response.text.strip()
+    raw_json = raw.strip()
 
     # Strip optional markdown code fence (```json ... ```)
     if raw_json.startswith(JSON_BLOCK_START_MARKER) and raw_json.endswith(
