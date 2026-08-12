@@ -2,7 +2,9 @@ from unittest.mock import MagicMock, patch
 
 from cold_email.database import Lead
 from cold_email.workers.research.helpers.extraction import (
+    call_gemini,
     find_company_url,
+    parse_gemini_response,
     scrape_website,
     select_best_url,
 )
@@ -33,6 +35,40 @@ def test_find_company_url():
         url = find_company_url(lead)
         mock_get.assert_called_once()
         assert url == "https://acme.com"
+
+
+def test_call_gemini_uses_models_generate_content():
+    """Regression guard for the google-genai API shape.
+
+    generate_content lives on client.models (the service), NOT on the Model
+    object returned by client.models.get(). The old code called
+    client.models.get(...).generate_content(...) and crashed with
+    AttributeError once it was finally exercised in prod.
+    """
+    fake_response = MagicMock()
+    fake_response.text = (
+        '{"tech_stack": ["Python"], "recent_news": "Raised seed", "hook": "Ledger infra"}'
+    )
+    mock_client = MagicMock()
+    mock_client.models.generate_content.return_value = fake_response
+
+    with patch(
+        "cold_email.workers.research.helpers.extraction.genai.Client",
+        return_value=mock_client,
+    ):
+        response = call_gemini("scraped text", "Acme Corp")
+
+    mock_client.models.generate_content.assert_called_once()
+    mock_client.models.get.assert_not_called()
+    # Structured-output config, not the old Anthropic-shaped tools param.
+    _, kwargs = mock_client.models.generate_content.call_args
+    assert kwargs["model"]
+    assert kwargs["config"]["response_mime_type"] == "application/json"
+    assert "tools" not in kwargs["config"]
+
+    parsed = parse_gemini_response(response)
+    assert parsed["tech_stack"] == ["Python"]
+    assert parsed["hook"] == "Ledger infra"
 
 
 def test_scrape_website_soup():
