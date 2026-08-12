@@ -1,4 +1,5 @@
 from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 
@@ -20,7 +21,7 @@ async def test_health_check():
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         response = await ac.get("/api/health")
-    
+
     app.dependency_overrides.clear()
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
@@ -50,7 +51,7 @@ async def test_pipeline_stats():
 @pytest.mark.asyncio
 async def test_list_leads():
     mock_db = AsyncMock()
-    
+
     mock_lead = MagicMock(spec=Lead)
     mock_lead.id = "00000000-0000-0000-0000-000000000001"
     mock_lead.company_name = "Acme Corp"

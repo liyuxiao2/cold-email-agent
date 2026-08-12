@@ -1,5 +1,4 @@
 import logging
-from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -7,7 +6,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from cold_email.database import Draft, Lead, Research, get_async_session
+from cold_email.database import Lead, get_async_session
 
 logger = logging.getLogger(__name__)
 
@@ -93,8 +92,8 @@ async def get_draft_review_queue(session: AsyncSession = Depends(get_async_sessi
 
 @router.get("/leads")
 async def list_leads(
-    status: Optional[str] = Query(None, description="Filter by status (found, researched, drafted, approved, sent, rejected, failed)"),
-    search: Optional[str] = Query(None, description="Search company or founder name"),
+    status: str | None = Query(None, description="Filter by status (found, researched, drafted, approved, sent, rejected, failed)"),
+    search: str | None = Query(None, description="Search company or founder name"),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     session: AsyncSession = Depends(get_async_session),
@@ -191,7 +190,7 @@ async def approve_lead_api(
 @router.post("/leads/{lead_id}/reject")
 async def reject_lead_api(
     lead_id: str,
-    payload: Optional[RejectRequest] = None,
+    payload: RejectRequest | None = None,
     session: AsyncSession = Depends(get_async_session),
 ):
     """Reject a drafted lead with optional notes."""
@@ -251,7 +250,7 @@ async def trigger_discovery_api():
     except Exception as e:
         tb = traceback.format_exc()
         logger.error(f"Failed to queue discovery task: {e}\n{tb}")
-        raise HTTPException(status_code=500, detail=f"Failed to queue discovery task: {e} | Traceback: {tb}")
+        raise HTTPException(status_code=500, detail=f"Failed to queue discovery task: {e} | Traceback: {tb}") from e
 
 
 @router.post("/pipeline/drafting")
@@ -265,5 +264,5 @@ async def trigger_drafting_api():
     except Exception as e:
         tb = traceback.format_exc()
         logger.error(f"Failed to queue drafting task: {e}\n{tb}")
-        raise HTTPException(status_code=500, detail=f"Failed to queue drafting task: {e} | Traceback: {tb}")
+        raise HTTPException(status_code=500, detail=f"Failed to queue drafting task: {e} | Traceback: {tb}") from e
 

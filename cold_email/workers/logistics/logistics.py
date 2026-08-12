@@ -12,12 +12,12 @@ import logging
 
 from celery import shared_task
 
+from cold_email.workers.logistics.constants import ERR_NO_GMAIL_DRAFT
+from cold_email.workers.logistics.helpers.db_helpers import fetch_send_inputs
 from cold_email.workers.shared.constants import DEFAULT_MAX_RETRIES, DEFAULT_RETRY_DELAY
 from cold_email.workers.shared.db_helpers import update_lead_status
 from cold_email.workers.shared.errors import handle_terminal_failure
 from cold_email.workers.shared.gmail_client import send_draft
-from cold_email.workers.logistics.constants import ERR_NO_GMAIL_DRAFT
-from cold_email.workers.logistics.helpers.db_helpers import fetch_send_inputs
 
 logger = logging.getLogger(__name__)
 

@@ -10,8 +10,6 @@ import logging
 
 from celery import shared_task
 
-from cold_email.workers.shared.constants import DEFAULT_MAX_RETRIES, DEFAULT_RETRY_DELAY
-from cold_email.workers.shared.db_helpers import update_lead_status
 from cold_email.workers.research.helpers.db_helpers import commit_research
 from cold_email.workers.research.helpers.extraction import (
     call_gemini,
@@ -19,6 +17,8 @@ from cold_email.workers.research.helpers.extraction import (
     scrape_website,
 )
 from cold_email.workers.research.helpers.preflight import resolve_lead_url
+from cold_email.workers.shared.constants import DEFAULT_MAX_RETRIES, DEFAULT_RETRY_DELAY
+from cold_email.workers.shared.db_helpers import update_lead_status
 
 logger = logging.getLogger(__name__)
 
