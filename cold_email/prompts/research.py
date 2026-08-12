@@ -28,9 +28,13 @@ class ResearchExtraction(BaseModel):
     )
     hook: str = Field(
         description=(
-            "One specific, concrete angle for a cold email from a fintech engineer "
-            "with ledger/payment infrastructure experience — what problem might they "
-            "be facing that this person could help with?"
+            "The single most compelling, specific thing about THIS company's work "
+            "that would make an engineer genuinely want to work here — anchored to a "
+            "concrete detail (a recent raise, a product launch, a hard technical "
+            "problem they're tackling, or their mission). Phrase it as authentic "
+            "interest in what they're building. Do NOT frame it as a problem the "
+            "sender could solve or a skill the sender could offer — it's about why "
+            "their work is exciting, not about the sender."
         )
     )
 
