@@ -51,6 +51,8 @@ The entire production stack runs 24/7 in Google Cloud and Vercel:
 | **Approve Lead** | `POST /api/leads/{id}/approve` | Approves draft and dispatches `logistics_task` (Gmail send) |
 | **Reject Lead** | `POST /api/leads/{id}/reject` | Marks lead as rejected with optional notes |
 | **Regenerate Draft** | `POST /api/leads/{id}/regenerate` | Resets lead to `researched` and triggers re-drafting |
+| **List DLQ** | `GET /api/dlq` | Lists dead-lettered (terminally-failed) tasks awaiting retry |
+| **Retry DLQ** | `POST /api/dlq/retry` | Re-dispatches dead-lettered tasks (optional `?stage=research\|drafting\|logistics`); resets each lead and clears its row |
 
 ---
 
@@ -78,8 +80,9 @@ The entire production stack runs 24/7 in Google Cloud and Vercel:
 2. **Research (`cold_email.workers.research.research_task`)**:
    - Resolves the official company website via DuckDuckGo (`ddgs`, keyless) — candidates scored by `select_best_url` (aggregator blocklist + slug match). Non-fatal search errors propagate so the task retries instead of terminally failing the lead.
    - Scrapes `/about`, `/team`, and homepage content using BeautifulSoup, falling back to Firecrawl.
-   - Calls the LLM via `generate_json` (see provider-agnostic layer below) to extract tech stack, recent news, and an interest hook.
-   - Updates `research` table and marks `lead.status = 'researched'`.
+   - Calls the LLM via `generate_json` (see provider-agnostic layer below) to extract founder name, tech stack, recent news, and an interest hook.
+   - **Email-finding (Hunter.io):** resolves the founder's work email from name + company domain via `find_email` (`helpers/email_finder.py`). The directory sources never carry an address, so this is where a lead becomes emailable.
+   - **Fail-fast gate:** `should_accept_email` accepts only a real address whose Hunter confidence ≥ `MIN_EMAIL_SCORE` (50). No usable email → the lead is **dead-lettered at research** (`handle_terminal_failure`, stage `research`) and never advances, so it doesn't waste the drafting stage. Otherwise the email is saved and `lead.status = 'researched'`.
    - Recoverable: `POST /api/pipeline/research` re-dispatches research for leads stuck in `found`/`failed` (discovery only enqueues research for brand-new leads).
 
 3. **Drafting Sweep (`cold_email.workers.drafting.drafting_task`)**:
@@ -109,11 +112,23 @@ narrow waist hides provider specifics; swapping models is just editing
 
 ---
 
+## ☠️ Dead-Letter Queue (`dead_letter` table)
+
+Every terminal failure funnels through one choke point — `handle_terminal_failure(lead_id, reason, *, stage, task_name)` (`workers/shared/errors.py`) — which both marks the lead `failed` **and** writes a `dead_letter` row. So a permanently-failed lead is visible on the lead *and* independently retryable.
+
+- **Producers:** research (no usable email), drafting (no founder email backstop, empty model output).
+- **Retry:** `POST /api/dlq/retry` resets each lead to its stage's input state (`research`→`found`, `drafting`→`researched`, `logistics`→`approved`), re-dispatches the worker, and deletes the row. A task that fails again is re-written to the DLQ by the same choke point, so the queue self-cleans.
+- **Inspect:** `GET /api/dlq` lists rows with the joined company name, stage, error, and retry count.
+- On first boot after migration `004`, `start.sh` provisions the table via idempotent `Base.metadata.create_all`.
+
+---
+
 ## 🗄️ Database Schema & Views
 
 - **`leads`**: Company info, founder info, status (`found`, `researched`, `drafted`, `approved`, `sent`, `rejected`, `failed`), error logs.
 - **`research`**: Tech stack JSONB, recent news, value proposition hook, raw scraped content.
 - **`drafts`**: Subject line, generated email body, `gmail_draft_id`, version, reviewer notes.
+- **`dead_letter`**: Terminally-failed tasks — `lead_id`, `task_name`, `stage`, `error_msg`, `retry_count` (see DLQ above).
 - **`pending_drafts` View**: Distinct leads in `researched` status joined with their latest research.
 - **`pending_sends` View**: Leads in `approved` status joined with their latest `gmail_draft_id`.
 
@@ -133,6 +148,7 @@ CELERY_RESULT_BACKEND=redis://10.110.4.35:6379/1
 FIRECRAWL_API_KEY=fc-...              # scraping (research fallback)
 GEMINI_API_KEY=AQ...                 # Gemini provider
 GROQ_API_KEY=gsk_...                 # Groq provider (llama models in the fallback chain)
+HUNTER_API_KEY=...                   # Hunter.io Email Finder (founder email discovery in research)
 # URL discovery uses DuckDuckGo (ddgs) — keyless, no API key needed.
 # Optional: MODEL_FALLBACK_CHAIN=["llama-3.3-70b-versatile","gemini-3.5-flash-lite"]
 # Optional: MODEL_NAME=gemini-flash-latest   (default single model when chain unset)
