@@ -35,16 +35,20 @@ def _build_service():
     return build("gmail", "v1", credentials=creds)
 
 
-def create_draft(to: str, subject: str, body: str) -> str:
+def create_draft(to: str, subject: str, body: str, html: str | None = None) -> str:
     """Create a Gmail draft in the sender's mailbox and return its draft ID.
 
     The Gmail API wants the whole RFC 2822 message base64url-encoded as `raw`.
+    When `html` is given, the message becomes multipart/alternative: the plain
+    `body` is the fallback and `html` is the rich version Gmail renders.
     """
     message = EmailMessage()
     message["To"] = to
     message["From"] = settings.gmail_sender_email
     message["Subject"] = subject
     message.set_content(body)
+    if html:
+        message.add_alternative(html, subtype="html")
 
     raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
 
