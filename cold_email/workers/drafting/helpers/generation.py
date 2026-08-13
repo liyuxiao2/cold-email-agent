@@ -12,7 +12,7 @@ from google import genai
 from cold_email.config import settings
 from cold_email.prompts.email_draft import (
     EMAIL_DRAFT_SYSTEM,
-    EMAIL_DRAFT_TOOL,
+    EmailDraft,
     build_email_draft_messages,
 )
 from cold_email.workers.drafting.constants import (
@@ -42,7 +42,6 @@ def generate_email(row: PendingDraft):
     recipient/research fields here.
     """
     client = genai.Client(api_key=settings.gemini_api_key)
-    model = client.models.get(model=MODEL_NAME)
     messages = build_email_draft_messages(
         founder_name=row.founder_name or "there",
         company_name=row.company_name,
@@ -50,11 +49,13 @@ def generate_email(row: PendingDraft):
         recent_news=row.recent_news or "",
         hook=row.hook or "",
     )
-    return model.generate_content(
-        messages,
+    return client.models.generate_content(
+        model=MODEL_NAME,
+        contents=messages,
         config={
             "system_instruction": EMAIL_DRAFT_SYSTEM,
-            "tools": [EMAIL_DRAFT_TOOL],
+            "response_mime_type": "application/json",
+            "response_schema": EmailDraft,
         },
     )
 

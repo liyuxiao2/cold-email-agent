@@ -35,7 +35,7 @@ def research_task(self, lead_id: str) -> dict:
     Dispatched by discovery_task per lead.
     Steps:
       1. Fetch lead from DB
-      2. Call Brave Search API to find the company homepage
+      2. Search DuckDuckGo to find the company homepage
       3. Scrape homepage with BeautifulSoup (requests.get), fallback to Firecrawl
       4. Call Gemini Flash for structured extraction
       5. Insert row into research table, update lead.status = 'researched'

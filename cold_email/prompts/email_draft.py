@@ -1,3 +1,5 @@
+from pydantic import BaseModel, Field
+
 from cold_email.config import settings
 
 EMAIL_DRAFT_SYSTEM = (
@@ -14,24 +16,11 @@ EMAIL_DRAFT_SYSTEM = (
     "- Do not mention 'internship' or 'opportunity' — just propose a conversation"
 )
 
-EMAIL_DRAFT_TOOL = {
-    "name": "write_email",
-    "description": "Write a cold email subject line and body",
-    "input_schema": {
-        "type": "object",
-        "properties": {
-            "subject": {
-                "type": "string",
-                "description": "Email subject line",
-            },
-            "body": {
-                "type": "string",
-                "description": "Email body, ≤ 150 words",
-            },
-        },
-        "required": ["subject", "body"],
-    },
-}
+class EmailDraft(BaseModel):
+    """Generated cold email — used as the Gemini response_schema."""
+
+    subject: str = Field(description="Email subject line")
+    body: str = Field(description="Email body, ≤ 150 words")
 
 
 # startups.gallery leads are founders and there's no title column upstream.
@@ -44,21 +33,16 @@ def build_email_draft_messages(
     tech_stack: list[str],
     recent_news: str,
     hook: str,
-) -> list[dict]:
+) -> str:
     """Build the drafting prompt. Sender identity comes from settings and the
     recipient title is defaulted, so callers only pass the recipient/research
     fields."""
-    return [
-        {
-            "role": "user",
-            "content": (
-                f"Sender: {settings.sender_name}, {settings.sender_role} "
-                f"at {settings.sender_company}\n"
-                f"Recipient: {founder_name}, {RECIPIENT_TITLE} at {company_name}\n"
-                f"Tech stack: {', '.join(tech_stack)}\n"
-                f"Recent news: {recent_news}\n"
-                f"Hook: {hook}\n\n"
-                "Write the subject line and email body."
-            ),
-        }
-    ]
+    return (
+        f"Sender: {settings.sender_name}, {settings.sender_role} "
+        f"at {settings.sender_company}\n"
+        f"Recipient: {founder_name}, {RECIPIENT_TITLE} at {company_name}\n"
+        f"Tech stack: {', '.join(tech_stack)}\n"
+        f"Recent news: {recent_news}\n"
+        f"Hook: {hook}\n\n"
+        "Write the subject line and email body."
+    )

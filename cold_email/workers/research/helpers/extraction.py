@@ -9,9 +9,9 @@ import logging
 import re
 from urllib.parse import urlparse
 
-import httpx
 import requests
 from bs4 import BeautifulSoup
+from ddgs import DDGS
 from firecrawl import FirecrawlApp
 from google import genai
 
@@ -19,15 +19,11 @@ from cold_email.config import settings
 from cold_email.database import Lead
 from cold_email.prompts.research import (
     EXTRACTION_SYSTEM,
-    EXTRACTION_TOOL,
+    ResearchExtraction,
     build_extraction_messages,
 )
 from cold_email.workers.research.constants import (
     AGGREGATOR_BLOCKLIST,
-    BRAVE_SEARCH_API_URL,
-    BRAVE_SEARCH_HEADERS,
-    BRAVE_SEARCH_RESULT_COUNT,
-    BRAVE_SEARCH_TIMEOUT,
     DOMAIN_MATCH_SCORE,
     DOMAIN_MISMATCH_SCORE,
     GEMINI_MODEL_NAME,
@@ -38,6 +34,7 @@ from cold_email.workers.research.constants import (
     MIN_SCRAPED_TEXT_LEN,
     SCRAPE_EXCLUDE_TAGS,
     SCRAPE_TIMEOUT,
+    SEARCH_RESULT_COUNT,
     SLUG_CLEANUP_REGEX,
 )
 
@@ -45,23 +42,20 @@ logger = logging.getLogger(__name__)
 
 
 def find_company_url(lead: Lead) -> str | None:
-    """Use the Brave Search API to find the best URL for a company."""
+    """Use DuckDuckGo (keyless) to find the best URL for a company.
+
+    ddgs raises on transient failures (rate limiting, network) rather than
+    returning a status code, so those propagate up and the research task's
+    autoretry recovers the lead. An empty result list is a genuine
+    "not found" and select_best_url returns None (terminal).
+    """
     query_parts = [lead.company_name, lead.funding_stage]
-    arguments = [arg for arg in query_parts if arg]
-    params = {
-        "q": " ".join(arguments),
-        "count": BRAVE_SEARCH_RESULT_COUNT,
-        "result_filter": ["web"],
-    }
-    response = httpx.get(
-        BRAVE_SEARCH_API_URL,
-        params=params,
-        headers=BRAVE_SEARCH_HEADERS,
-        timeout=BRAVE_SEARCH_TIMEOUT,
-    )
-    results = response.json().get("web", {}).get("results", [])
-    logger.info(f"Brave Search results for finding {lead.company_name}: {results}")
-    return select_best_url(results, lead)
+    query = " ".join(arg for arg in query_parts if arg)
+    results = DDGS().text(query, max_results=SEARCH_RESULT_COUNT)
+    logger.info(f"DuckDuckGo results for finding {lead.company_name}: {results}")
+    # ddgs returns the URL under 'href'; select_best_url expects 'url'.
+    candidates = [{"url": r["href"]} for r in results if r.get("href")]
+    return select_best_url(candidates, lead)
 
 
 def select_best_url(results: list[dict], lead: Lead) -> str | None:
@@ -119,12 +113,13 @@ def scrape_website(lead_url: str) -> str:
 def call_gemini(text: str, company_name: str):
     """Send scraped content to Gemini and return the raw model response."""
     client = genai.Client(api_key=settings.gemini_api_key)
-    model = client.models.get(model=GEMINI_MODEL_NAME)
-    return model.generate_content(
-        build_extraction_messages(company_name=company_name, scraped_content=text),
+    return client.models.generate_content(
+        model=GEMINI_MODEL_NAME,
+        contents=build_extraction_messages(company_name=company_name, scraped_content=text),
         config={
             "system_instruction": EXTRACTION_SYSTEM,
-            "tools": [EXTRACTION_TOOL],
+            "response_mime_type": "application/json",
+            "response_schema": ResearchExtraction,
         },
     )
 

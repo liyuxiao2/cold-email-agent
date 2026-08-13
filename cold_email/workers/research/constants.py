@@ -1,13 +1,5 @@
 from cold_email.config import settings
 
-BRAVE_SEARCH_API_URL = "https://api.search.brave.com/res/v1/web/search"
-
-BRAVE_SEARCH_HEADERS = {
-    "Accept": "application/json",
-    "Accept-Encoding": "gzip",
-    "X-Subscription-Token": settings.brave_api_key,
-}
-
 # Domains that aggregate startup info but are never the official homepage.
 AGGREGATOR_BLOCKLIST = {
     "linkedin.com",
@@ -24,9 +16,10 @@ AGGREGATOR_BLOCKLIST = {
     "venturebeat.com",
 }
 
-# Brave search settings
-BRAVE_SEARCH_RESULT_COUNT = 5
-BRAVE_SEARCH_TIMEOUT = 10.0  # seconds
+# URL-discovery search settings. Fetch several candidates because the top hit
+# is often an aggregator (Wikipedia, LinkedIn) rather than the official site;
+# select_best_url filters and scores them.
+SEARCH_RESULT_COUNT = 5
 
 # Scraper settings
 MIN_SCRAPED_TEXT_LEN = 300
@@ -37,8 +30,9 @@ SCRAPE_EXCLUDE_TAGS = ["script", "style", "footer", "nav", "iframe", "aside", "f
 # HTTP settings
 HTTP_STATUS_OK = 200
 
-# Model settings
-GEMINI_MODEL_NAME = "gemini-2.5-flash"
+# Model settings — defaults to the shared config value; override with a literal
+# here to let research diverge from drafting on model choice.
+GEMINI_MODEL_NAME = settings.model_name
 
 # JSON formatting extraction markers
 JSON_BLOCK_START_MARKER = "```json"

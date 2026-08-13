@@ -1,8 +1,12 @@
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from cold_email.database import Lead
 from cold_email.workers.research.helpers.extraction import (
+    call_gemini,
     find_company_url,
+    parse_gemini_response,
     scrape_website,
     select_best_url,
 )
@@ -25,14 +29,61 @@ def test_select_best_url():
 
 def test_find_company_url():
     lead = Lead(company_name="Acme Corp", funding_stage="Seed")
-    mock_response = MagicMock()
-    mock_response.json.return_value = {"web": {"results": [{"url": "https://acme.com"}]}}
-    with patch(
-        "cold_email.workers.research.helpers.extraction.httpx.get", return_value=mock_response
-    ) as mock_get:
+    # DDG returns aggregators alongside the real site; select_best_url picks the
+    # slug-matching homepage and skips the blocklisted LinkedIn result.
+    ddg_results = [
+        {"href": "https://linkedin.com/company/acme", "title": "Acme | LinkedIn"},
+        {"href": "https://acmecorp.com/about", "title": "Acme Corp"},
+    ]
+    with patch("cold_email.workers.research.helpers.extraction.DDGS") as MockDDGS:
+        MockDDGS.return_value.text.return_value = ddg_results
         url = find_company_url(lead)
-        mock_get.assert_called_once()
-        assert url == "https://acme.com"
+        MockDDGS.return_value.text.assert_called_once()
+        assert url == "https://acmecorp.com/about"
+
+
+def test_find_company_url_propagates_search_errors():
+    """A transient DDG failure (rate limit/network) must propagate so the task
+    retries — not collapse to None and terminally fail the lead."""
+    lead = Lead(company_name="Acme Corp", funding_stage="Seed")
+    with patch("cold_email.workers.research.helpers.extraction.DDGS") as MockDDGS:
+        MockDDGS.return_value.text.side_effect = RuntimeError("rate limited")
+        with pytest.raises(RuntimeError):
+            find_company_url(lead)
+
+
+def test_call_gemini_uses_models_generate_content():
+    """Regression guard for the google-genai API shape.
+
+    generate_content lives on client.models (the service), NOT on the Model
+    object returned by client.models.get(). The old code called
+    client.models.get(...).generate_content(...) and crashed with
+    AttributeError once it was finally exercised in prod.
+    """
+    fake_response = MagicMock()
+    fake_response.text = (
+        '{"tech_stack": ["Python"], "recent_news": "Raised seed", "hook": "Ledger infra"}'
+    )
+    mock_client = MagicMock()
+    mock_client.models.generate_content.return_value = fake_response
+
+    with patch(
+        "cold_email.workers.research.helpers.extraction.genai.Client",
+        return_value=mock_client,
+    ):
+        response = call_gemini("scraped text", "Acme Corp")
+
+    mock_client.models.generate_content.assert_called_once()
+    mock_client.models.get.assert_not_called()
+    # Structured-output config, not the old Anthropic-shaped tools param.
+    _, kwargs = mock_client.models.generate_content.call_args
+    assert kwargs["model"]
+    assert kwargs["config"]["response_mime_type"] == "application/json"
+    assert "tools" not in kwargs["config"]
+
+    parsed = parse_gemini_response(response)
+    assert parsed["tech_stack"] == ["Python"]
+    assert parsed["hook"] == "Ledger infra"
 
 
 def test_scrape_website_soup():

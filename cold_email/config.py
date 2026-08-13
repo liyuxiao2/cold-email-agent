@@ -20,7 +20,6 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     instantly_api_key: str = ""
     instantly_campaign_id: str = ""
-    brave_api_key: str = ""
     gemini_api_key: str = ""
 
     # Gmail API — OAuth2 refresh-token flow (single sender mailbox)
@@ -79,7 +78,10 @@ class Settings(BaseSettings):
 
     cors_origins: list[str] = ["*"]
 
-    model_name: str = "gemini-2.5-flash"
+    # Default Gemini model for research extraction + email drafting. Overridable
+    # via the MODEL_NAME env var (no redeploy needed). Uses the maintained
+    # `-latest` alias so a retired model version can't 404 the pipeline.
+    model_name: str = "gemini-flash-latest"
 
 
 settings = Settings()
