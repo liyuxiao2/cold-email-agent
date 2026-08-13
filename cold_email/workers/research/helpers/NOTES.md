@@ -1,28 +1,38 @@
-# Research Worker — Notes
+# Research Worker — URL Resolution Notes
 
-## `find_company_url`
+How the research stage decides which URL is a company's real homepage before it
+scrapes, extracts, and hands the domain to Hunter. Lives in `extraction.py` and
+is orchestrated by `preflight.resolve_lead_url`.
 
-Builds a search query from all non-null fields on the lead (company name, funding stage, etc.) and hits the Brave Web Search API with `count=5`. Fetches 5 candidates instead of 1 because the top result isn't always the official homepage — aggregators like Crunchbase or LinkedIn frequently rank above it.
+## `find_company_url(lead)`
 
-Brave response shape:
-```json
-{
-  "web": {
-    "results": [
-      { "url": "...", "title": "...", "description": "..." }
-    ]
-  }
-}
-```
+Keyless web search via DuckDuckGo (`ddgs`). Builds a query from the company name
+plus funding stage and asks for `SEARCH_RESULT_COUNT` (5) results — the top hit
+is often an aggregator (LinkedIn, Crunchbase) rather than the official site, so
+we fetch several and filter. `ddgs` returns each URL under `href`; we remap to
+`url` and pass the list to `select_best_url`.
 
-## `select_best_url`
+`ddgs` **raises** on transient failures (rate limiting, network) rather than
+returning a status code, so those propagate and the task's autoretry recovers
+the lead. An empty result list is a genuine "not found".
 
-Scores each result and returns the best URL.
+## `is_probable_homepage(url, company_name)`
 
-**Blocklist filter** — domains in `AGGREGATOR_BLOCKLIST` (constants.py) are skipped. Uses `in` rather than `==` so subdomains like `news.ycombinator.com` are caught by `"ycombinator.com"`.
+The single homepage test, used for both the DDG results **and** the
+discovery-scraped `company_url` (so a wrong domain never cascades into scraping,
+extraction, or the Hunter lookup). A domain qualifies only if:
 
-**Slug match** — both the company name and the domain are reduced to bare alphanumeric chars before comparing (`re.sub(r"[^a-z0-9]", "", ...)`), so punctuation, TLDs, and casing don't interfere. Match → score 1, no match → score 0.
+- **Not blocklisted** — domains in `AGGREGATOR_BLOCKLIST` (constants.py) are
+  rejected. Uses `in`, not `==`, so `news.ycombinator.com` is caught by
+  `ycombinator.com`.
+- **Slug match** — both the company name and the domain are reduced to bare
+  alphanumerics (`SLUG_CLEANUP_REGEX`) so punctuation, TLDs, and casing don't
+  interfere; the company slug must appear in the domain slug.
 
-**Stable sort** — `list.sort` is stable in Python, so equal-scored results stay in their original Brave order. Ties defer to Brave's own relevance ranking rather than arbitrary reordering.
+## `select_best_url(results, lead)`
 
-**Fallback** — if every result was on the blocklist, returns `results[0]["url"]` anyway. Some URL is better than `None` for the scraping step downstream.
+Returns the first result that passes `is_probable_homepage`, else **`None`** —
+results are already in search-relevance order. There is deliberately **no
+fallback to the first result**: when nothing slug-matches, the lead fails
+honestly as "no company URL" rather than proceeding on a guess (a wrong domain
+poisons the Hunter email lookup downstream).

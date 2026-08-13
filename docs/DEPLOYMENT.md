@@ -22,18 +22,18 @@ This guide provides instructions for deploying the **Cold Email Agent** backend 
 | `DATABASE_URL` | PostgreSQL connection URL with asyncpg | `postgresql+asyncpg://user:pass@host:5432/cold_email` |
 | `CELERY_BROKER_URL` | Redis broker URL | `redis://host:6379/0` (or `rediss://...` for Upstash) |
 | `CELERY_RESULT_BACKEND` | Redis result backend URL | `redis://host:6379/1` |
-| `ANTHROPIC_API_KEY` | Anthropic Claude API Key | `sk-ant-...` |
 | `FIRECRAWL_API_KEY` | Firecrawl Web Scraping API Key | `fc-...` |
-| `INSTANTLY_API_KEY` | Instantly.io API Key (optional) | From Instantly Settings |
-| `INSTANTLY_CAMPAIGN_ID` | Instantly Campaign UUID (optional) | From Instantly Campaigns |
-| `GMAIL_CLIENT_ID` | Google OAuth2 Client ID (if using Gmail) | GCP Credentials |
+| `GEMINI_API_KEY` | Google Gemini API Key | `AI...` |
+| `GROQ_API_KEY` | Groq API Key (llama models in fallback chain) | `gsk_...` |
+| `HUNTER_API_KEY` | Hunter.io Email Finder Key | From Hunter dashboard |
+| `MODEL_FALLBACK_CHAIN` | Optional JSON array overriding the LLM chain | `["llama-3.3-70b-versatile","gemini-3.5-flash-lite"]` |
+| `GMAIL_CLIENT_ID` | Google OAuth2 Client ID | GCP Credentials |
 | `GMAIL_CLIENT_SECRET` | Google OAuth2 Client Secret | GCP Credentials |
 | `GMAIL_REFRESH_TOKEN` | Google OAuth2 Refresh Token | Gmail OAuth flow |
 | `GMAIL_SENDER_EMAIL` | Sender email address | `you@company.com` |
-| `SENDER_NAME` | Name in email signature | `Liyu Xiao` |
-| `SENDER_ROLE` | Title in email signature | `Software Engineer` |
-| `SENDER_COMPANY` | Company name in email signature | `Your Company` |
 | `CORS_ORIGINS` | Allowed frontend domains | `["https://your-app.vercel.app", "http://localhost:3000"]` |
+
+> Sender identity (name, intro, links, experience bullets) is code, not config — edit `cold_email/sender_profile.py`.
 
 ### Frontend Configuration (Vercel)
 
@@ -63,7 +63,7 @@ This guide provides instructions for deploying the **Cold Email Agent** backend 
    ```bash
    gcloud run services update cold-email-backend \
        --region us-central1 \
-       --set-env-vars DATABASE_URL="<YOUR_ASYNC_POSTGRES_URL>",CELERY_BROKER_URL="<YOUR_REDIS_URL>",ANTHROPIC_API_KEY="<KEY>",FIRECRAWL_API_KEY="<KEY>"
+       --set-env-vars DATABASE_URL="<YOUR_ASYNC_POSTGRES_URL>",CELERY_BROKER_URL="<YOUR_REDIS_URL>",GEMINI_API_KEY="<KEY>",GROQ_API_KEY="<KEY>",FIRECRAWL_API_KEY="<KEY>",HUNTER_API_KEY="<KEY>"
    ```
 
 4. **Run Celery Worker on Cloud Run or Compute Engine**:

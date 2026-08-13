@@ -82,7 +82,7 @@ The entire production stack runs 24/7 in Google Cloud and Vercel:
    - Scrapes `/about`, `/team`, and homepage content using BeautifulSoup, falling back to Firecrawl.
    - Calls the LLM via `generate_json` (see provider-agnostic layer below) to extract founder name, tech stack, recent news, and an interest hook.
    - **Email-finding (Hunter.io):** resolves the founder's work email from name + company domain via `find_email` (`helpers/email_finder.py`). The directory sources never carry an address, so this is where a lead becomes emailable.
-   - **Fail-fast gate:** `should_accept_email` accepts only a real address whose Hunter confidence ≥ `MIN_EMAIL_SCORE` (50). No usable email → the lead is **dead-lettered at research** (`handle_terminal_failure`, stage `research`) and never advances, so it doesn't waste the drafting stage. Otherwise the email is saved and `lead.status = 'researched'`.
+   - **Fail-fast gate:** `should_accept_email` accepts only a real address whose Hunter confidence ≥ `MIN_EMAIL_SCORE` (25). No usable email → the lead is **dead-lettered at research** (`handle_terminal_failure`, stage `research`) and never advances, so it doesn't waste the drafting stage. Otherwise the email is saved and `lead.status = 'researched'`.
    - Recoverable: `POST /api/pipeline/research` re-dispatches research for leads stuck in `found`/`failed` (discovery only enqueues research for brand-new leads).
 
 3. **Drafting Sweep (`cold_email.workers.drafting.drafting_task`)**:
@@ -160,10 +160,7 @@ GMAIL_CLIENT_SECRET=...
 GMAIL_REFRESH_TOKEN=...
 GMAIL_SENDER_EMAIL=...
 
-# Sender Identity
-SENDER_NAME="Liyu Xiao"
-SENDER_ROLE="Software Engineer, Ledger Team"
-SENDER_COMPANY="Wealthsimple"
+# Sender identity is code, not config — see cold_email/sender_profile.py (PROFILE).
 
 # Frontend Vercel Config
 NEXT_PUBLIC_API_URL=https://cold-email-backend-426138953095.us-central1.run.app
