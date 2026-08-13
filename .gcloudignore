@@ -10,3 +10,6 @@ frontend/
 node_modules/
 **/node_modules/
 .DS_Store
+# Pins packages to a private authenticated mirror unreachable from Cloud Build;
+# the Dockerfile resolves from public PyPI instead.
+uv.lock

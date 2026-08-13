@@ -266,3 +266,25 @@ async def trigger_drafting_api():
         logger.error(f"Failed to queue drafting task: {e}\n{tb}")
         raise HTTPException(status_code=500, detail=f"Failed to queue drafting task: {e} | Traceback: {tb}") from e
 
+
+@router.post("/pipeline/research")
+async def trigger_research_api(
+    session: AsyncSession = Depends(get_async_session),
+):
+    """Re-dispatch research for leads stuck in 'found' — discovered but never researched.
+
+    Discovery only enqueues research for brand-new leads, so a lead found while
+    the worker was down (or whose research task was lost) stays orphaned in
+    'found' and is never retried. This requeues them through the research worker.
+    """
+    from cold_email.workers.research import research_task
+
+    result = await session.execute(select(Lead).where(Lead.status == "found"))
+    lead_ids = [str(lead.id) for lead in result.scalars().all()]
+
+    for lead_id in lead_ids:
+        research_task.delay(lead_id)
+
+    logger.info(f"Requeued {len(lead_ids)} 'found' leads for research")
+    return {"success": True, "requeued": len(lead_ids), "lead_ids": lead_ids}
+

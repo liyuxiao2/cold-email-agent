@@ -117,6 +117,35 @@ async def test_trigger_drafting():
 
 
 @pytest.mark.asyncio
+async def test_trigger_research_requeues_found_leads():
+    """Requeues only 'found' (orphaned, never-researched) leads. Terminally
+    'failed' leads are recovered separately via the dead-letter queue."""
+    found_lead = MagicMock(spec=Lead)
+    found_lead.id = "00000000-0000-0000-0000-000000000001"
+    found_lead.status = "found"
+
+    mock_scalars = MagicMock()
+    mock_scalars.all.return_value = [found_lead]
+    mock_result = MagicMock()
+    mock_result.scalars.return_value = mock_scalars
+
+    mock_db = AsyncMock()
+    mock_db.execute.return_value = mock_result
+    app.dependency_overrides[get_async_session] = lambda: mock_db
+
+    with patch("cold_email.workers.research.research.research_task.delay") as mock_delay:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            response = await ac.post("/api/pipeline/research")
+
+    app.dependency_overrides.clear()
+    assert response.status_code == 200
+    data = response.json()
+    assert data["success"] is True
+    assert data["requeued"] == 1
+    assert mock_delay.call_count == 1
+
+
+@pytest.mark.asyncio
 async def test_approve_lead():
     mock_db = AsyncMock()
     mock_lead = MagicMock(spec=Lead)
