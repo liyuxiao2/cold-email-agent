@@ -69,4 +69,10 @@ def test_logistics_fails_without_gmail_draft_id():
 
     assert result["status"] == "failed"
     mock_send.assert_not_called()
+    # handle_terminal_failure requires keyword-only stage/task_name — assert they
+    # are passed so the real (unmocked) call can't raise TypeError in production.
     assert mock_terminal.call_args.args[0] == LEAD_ID
+    assert mock_terminal.call_args.kwargs["stage"] == "logistics"
+    assert mock_terminal.call_args.kwargs["task_name"] == (
+        "cold_email.workers.logistics.logistics_task"
+    )
