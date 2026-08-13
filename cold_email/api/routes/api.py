@@ -1,4 +1,5 @@
 import logging
+import traceback
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -15,6 +16,72 @@ router = APIRouter(prefix="/api", tags=["pipeline"])
 
 class RejectRequest(BaseModel):
     notes: str = ""
+
+
+def _latest(items):
+    """Newest row by created_at, or None.
+
+    version is vestigial (commit_draft leaves it =1), so keying on created_at is
+    what stays correct after a regenerate — consistent with the pending_sends view.
+    """
+    return max(items, key=lambda x: x.created_at, default=None) if items else None
+
+
+def _serialize_lead(lead, *, include_meta: bool = False) -> dict:
+    """Serialize a Lead + its latest draft/research to the API's JSON shape.
+
+    include_meta adds error_msg/updated_at (the /leads explorer wants them, the
+    review queue doesn't). The frontend LeadItem type is a superset of both, so
+    the two endpoints share one serializer.
+    """
+    latest_draft = _latest(lead.drafts)
+    latest_research = _latest(lead.research)
+    item = {
+        "id": str(lead.id),
+        "company_name": lead.company_name,
+        "founder_name": lead.founder_name,
+        "founder_email": lead.founder_email,
+        "company_url": lead.company_url,
+        "linkedin_url": lead.linkedin_url,
+        "funding_stage": lead.funding_stage,
+        "headcount": lead.headcount,
+        "status": lead.status,
+        "created_at": lead.created_at.isoformat() if lead.created_at else None,
+        "draft": {
+            "id": str(latest_draft.id),
+            "subject_line": latest_draft.subject_line,
+            "body": latest_draft.body,
+            "version": latest_draft.version,
+            "gmail_draft_id": latest_draft.gmail_draft_id,
+            "created_at": latest_draft.created_at.isoformat() if latest_draft.created_at else None,
+        }
+        if latest_draft
+        else None,
+        "research": {
+            "hook": latest_research.hook,
+            "tech_stack": latest_research.tech_stack,
+            "recent_news": latest_research.recent_news,
+        }
+        if latest_research
+        else None,
+    }
+    if include_meta:
+        item["error_msg"] = lead.error_msg
+        item["updated_at"] = lead.updated_at.isoformat() if lead.updated_at else None
+    return item
+
+
+def _apply_lead_filters(stmt, status: str | None, search: str | None):
+    """Apply the shared status/search WHERE clauses to a leads query.
+
+    Used for both the row query and its COUNT so the two can't drift.
+    """
+    if status:
+        stmt = stmt.where(Lead.status == status)
+    if search:
+        pattern = f"%{search}%"
+        stmt = stmt.where((Lead.company_name.ilike(pattern)) | (Lead.founder_name.ilike(pattern)))
+    return stmt
 
 
 @router.get("/health")
@@ -56,108 +123,39 @@ async def get_draft_review_queue(session: AsyncSession = Depends(get_async_sessi
     result = await session.execute(stmt)
     leads = result.scalars().all()
 
-    items = []
-    for lead in leads:
-        # Newest draft by created_at — consistent with the pending_sends view.
-        # (version is vestigial: commit_draft leaves it =1, so keying on version
-        # returns a stale row after a regenerate.)
-        latest_draft = max(lead.drafts, key=lambda d: d.created_at, default=None)
-        latest_research = max(lead.research, key=lambda r: r.created_at, default=None) if lead.research else None
-
-        items.append({
-            "id": str(lead.id),
-            "company_name": lead.company_name,
-            "founder_name": lead.founder_name,
-            "founder_email": lead.founder_email,
-            "company_url": lead.company_url,
-            "linkedin_url": lead.linkedin_url,
-            "funding_stage": lead.funding_stage,
-            "headcount": lead.headcount,
-            "status": lead.status,
-            "created_at": lead.created_at.isoformat() if lead.created_at else None,
-            "draft": {
-                "id": str(latest_draft.id),
-                "subject_line": latest_draft.subject_line,
-                "body": latest_draft.body,
-                "version": latest_draft.version,
-                "gmail_draft_id": latest_draft.gmail_draft_id,
-                "created_at": latest_draft.created_at.isoformat() if latest_draft.created_at else None,
-            } if latest_draft else None,
-            "research": {
-                "hook": latest_research.hook if latest_research else None,
-                "tech_stack": latest_research.tech_stack if latest_research else None,
-                "recent_news": latest_research.recent_news if latest_research else None,
-            } if latest_research else None,
-        })
-
-    return items
+    return [_serialize_lead(lead) for lead in leads]
 
 
 @router.get("/leads")
 async def list_leads(
-    status: str | None = Query(None, description="Filter by status (found, researched, drafted, approved, sent, rejected, failed)"),
+    status: str | None = Query(
+        None,
+        description="Filter by status (found, researched, drafted, approved, sent, rejected, failed)",
+    ),
     search: str | None = Query(None, description="Search company or founder name"),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     session: AsyncSession = Depends(get_async_session),
 ):
     """List leads with pagination, filtering, and search."""
-    stmt = select(Lead).options(selectinload(Lead.drafts), selectinload(Lead.research))
-
-    if status:
-        stmt = stmt.where(Lead.status == status)
-    if search:
-        pattern = f"%{search}%"
-        stmt = stmt.where((Lead.company_name.ilike(pattern)) | (Lead.founder_name.ilike(pattern)))
-
-    stmt = stmt.order_by(Lead.created_at.desc()).limit(limit).offset(offset)
+    stmt = (
+        _apply_lead_filters(
+            select(Lead).options(selectinload(Lead.drafts), selectinload(Lead.research)),
+            status,
+            search,
+        )
+        .order_by(Lead.created_at.desc())
+        .limit(limit)
+        .offset(offset)
+    )
     result = await session.execute(stmt)
     leads = result.scalars().all()
 
-    # Total count matching query
-    count_stmt = select(func.count(Lead.id))
-    if status:
-        count_stmt = count_stmt.where(Lead.status == status)
-    if search:
-        pattern = f"%{search}%"
-        count_stmt = count_stmt.where((Lead.company_name.ilike(pattern)) | (Lead.founder_name.ilike(pattern)))
+    count_stmt = _apply_lead_filters(select(func.count(Lead.id)), status, search)
     total_matching = (await session.execute(count_stmt)).scalar_one()
 
-    items = []
-    for lead in leads:
-        # Newest draft by created_at — consistent with the pending_sends view.
-        # (version is vestigial: commit_draft leaves it =1, so keying on version
-        # returns a stale row after a regenerate.)
-        latest_draft = max(lead.drafts, key=lambda d: d.created_at, default=None)
-        latest_research = max(lead.research, key=lambda r: r.created_at, default=None) if lead.research else None
-
-        items.append({
-            "id": str(lead.id),
-            "company_name": lead.company_name,
-            "founder_name": lead.founder_name,
-            "founder_email": lead.founder_email,
-            "company_url": lead.company_url,
-            "linkedin_url": lead.linkedin_url,
-            "funding_stage": lead.funding_stage,
-            "headcount": lead.headcount,
-            "status": lead.status,
-            "error_msg": lead.error_msg,
-            "created_at": lead.created_at.isoformat() if lead.created_at else None,
-            "updated_at": lead.updated_at.isoformat() if lead.updated_at else None,
-            "draft": {
-                "id": str(latest_draft.id),
-                "subject_line": latest_draft.subject_line,
-                "body": latest_draft.body,
-                "version": latest_draft.version,
-                "gmail_draft_id": latest_draft.gmail_draft_id,
-            } if latest_draft else None,
-            "research": {
-                "hook": latest_research.hook if latest_research else None,
-            } if latest_research else None,
-        })
-
     return {
-        "items": items,
+        "items": [_serialize_lead(lead, include_meta=True) for lead in leads],
         "total": total_matching,
         "limit": limit,
         "offset": offset,
@@ -179,6 +177,7 @@ async def approve_lead_api(
 
     try:
         from cold_email.workers.logistics import logistics_task
+
         task = logistics_task.delay(lead_id)
         task_id = task.id
     except Exception as e:
@@ -231,6 +230,7 @@ async def regenerate_lead_api(
 
     try:
         from cold_email.workers.drafting import drafting_task
+
         task = drafting_task.delay()
         task_id = task.id
     except Exception as e:
@@ -245,32 +245,34 @@ async def regenerate_lead_api(
     }
 
 
+def _queue_pipeline_task(task, label: str) -> dict:
+    """Enqueue a /pipeline/* Celery task, surfacing a broker failure as a 500."""
+    try:
+        result = task.delay()
+        return {"success": True, "message": f"{label} task queued", "task_id": result.id}
+    except Exception as e:
+        tb = traceback.format_exc()
+        logger.error(f"Failed to queue {label.lower()} task: {e}\n{tb}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to queue {label.lower()} task: {e} | Traceback: {tb}",
+        ) from e
+
+
 @router.post("/pipeline/discovery")
 async def trigger_discovery_api():
     """Manually trigger a discovery run."""
-    import traceback
-    try:
-        from cold_email.workers.discovery import discovery_task
-        task = discovery_task.delay()
-        return {"success": True, "message": "Discovery task queued", "task_id": task.id}
-    except Exception as e:
-        tb = traceback.format_exc()
-        logger.error(f"Failed to queue discovery task: {e}\n{tb}")
-        raise HTTPException(status_code=500, detail=f"Failed to queue discovery task: {e} | Traceback: {tb}") from e
+    from cold_email.workers.discovery import discovery_task
+
+    return _queue_pipeline_task(discovery_task, "Discovery")
 
 
 @router.post("/pipeline/drafting")
 async def trigger_drafting_api():
     """Manually trigger a drafting batch sweep."""
-    import traceback
-    try:
-        from cold_email.workers.drafting import drafting_task
-        task = drafting_task.delay()
-        return {"success": True, "message": "Drafting task queued", "task_id": task.id}
-    except Exception as e:
-        tb = traceback.format_exc()
-        logger.error(f"Failed to queue drafting task: {e}\n{tb}")
-        raise HTTPException(status_code=500, detail=f"Failed to queue drafting task: {e} | Traceback: {tb}") from e
+    from cold_email.workers.drafting import drafting_task
+
+    return _queue_pipeline_task(drafting_task, "Drafting")
 
 
 @router.post("/pipeline/research")
@@ -333,7 +335,9 @@ async def list_dead_letter(session: AsyncSession = Depends(get_async_session)):
 
 @router.post("/dlq/retry")
 async def retry_dead_letter(
-    stage: str | None = Query(None, description="Only retry this stage (research/drafting/logistics)"),
+    stage: str | None = Query(
+        None, description="Only retry this stage (research/drafting/logistics)"
+    ),
     session: AsyncSession = Depends(get_async_session),
 ):
     """Re-dispatch dead-lettered tasks: reset each lead to its stage's input
@@ -372,4 +376,3 @@ async def retry_dead_letter(
     await session.commit()
     logger.info(f"Retried {retried} dead-lettered task(s)" + (f" (stage={stage})" if stage else ""))
     return {"success": True, "retried": retried}
-

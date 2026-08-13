@@ -4,7 +4,6 @@ Handles all I/O-heavy work: searching for company URLs, scraping web pages,
 and calling the Gemini LLM for structured data extraction.
 """
 
-import json
 import logging
 import re
 from urllib.parse import urlparse
@@ -24,8 +23,6 @@ from cold_email.prompts.research import (
 from cold_email.workers.research.constants import (
     AGGREGATOR_BLOCKLIST,
     HTTP_STATUS_OK,
-    JSON_BLOCK_END_MARKER,
-    JSON_BLOCK_START_MARKER,
     MAX_SCRAPED_TEXT_LEN,
     MIN_SCRAPED_TEXT_LEN,
     SCRAPE_EXCLUDE_TAGS,
@@ -33,6 +30,7 @@ from cold_email.workers.research.constants import (
     SEARCH_RESULT_COUNT,
     SLUG_CLEANUP_REGEX,
 )
+from cold_email.workers.shared.json_parsing import parse_fenced_json
 from cold_email.workers.shared.llm import generate_json
 
 logger = logging.getLogger(__name__)
@@ -134,21 +132,7 @@ def call_gemini(text: str, company_name: str) -> str:
 def parse_gemini_response(raw: str) -> dict:
     """Parse the structured JSON payload from a raw LLM response string.
 
-    Returns an empty dict if the text is missing or malformed.
+    Thin wrapper over the shared fail-soft parser; kept as a named entry point
+    for research.py and its tests.
     """
-    if not raw:
-        return {}
-
-    raw_json = raw.strip()
-
-    # Strip optional markdown code fence (```json ... ```)
-    if raw_json.startswith(JSON_BLOCK_START_MARKER) and raw_json.endswith(
-        JSON_BLOCK_END_MARKER
-    ):
-        raw_json = raw_json[len(JSON_BLOCK_START_MARKER) : -len(JSON_BLOCK_END_MARKER)].strip()
-
-    try:
-        return json.loads(raw_json)
-    except json.JSONDecodeError:
-        logger.error(f"Failed to parse JSON response: {raw_json}")
-        return {}
+    return parse_fenced_json(raw)

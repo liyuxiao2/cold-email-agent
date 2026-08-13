@@ -6,7 +6,6 @@ template and renders HTML → {subject, body, body_html}. The template (not the
 LLM) owns structure/tone.
 """
 
-import json
 import logging
 
 from cold_email.prompts.email_draft import (
@@ -16,14 +15,11 @@ from cold_email.prompts.email_draft import (
 )
 from cold_email.prompts.email_template import TEMPLATE, fill_template
 from cold_email.sender_profile import PROFILE, SenderProfile
-from cold_email.workers.drafting.constants import (
-    JSON_BLOCK_END_MARKER,
-    JSON_BLOCK_START_MARKER,
-)
 from cold_email.workers.drafting.helpers.html_builder import (
     markdown_to_html,
     plain_text_fallback,
 )
+from cold_email.workers.shared.json_parsing import parse_fenced_json
 from cold_email.workers.shared.llm import generate_json
 from cold_email.workers.shared.views import PendingDraft
 
@@ -59,17 +55,12 @@ def generate_email(row: PendingDraft) -> str:
 
 
 def parse_email_response(raw: str) -> dict:
-    """Parse the contextual-slots JSON, stripping any ```json fence. {} if malformed."""
-    if not raw:
-        return {}
-    raw_json = raw.strip()
-    if raw_json.startswith(JSON_BLOCK_START_MARKER) and raw_json.endswith(JSON_BLOCK_END_MARKER):
-        raw_json = raw_json[len(JSON_BLOCK_START_MARKER) : -len(JSON_BLOCK_END_MARKER)].strip()
-    try:
-        return json.loads(raw_json)
-    except json.JSONDecodeError:
-        logger.error(f"Failed to parse email draft JSON: {raw_json}")
-        return {}
+    """Parse the contextual-slots JSON via the shared fail-soft parser.
+
+    Kept as a named entry point (exported from the drafting package) over
+    parse_fenced_json.
+    """
+    return parse_fenced_json(raw)
 
 
 def _bullet_md(bullet: str) -> str:

@@ -44,10 +44,6 @@ SCRAPE_EXCLUDE_TAGS = ["script", "style", "footer", "nav", "iframe", "aside", "f
 # HTTP settings
 HTTP_STATUS_OK = 200
 
-# JSON formatting extraction markers
-JSON_BLOCK_START_MARKER = "```json"
-JSON_BLOCK_END_MARKER = "```"
-
 # Slug used to match a company name against a candidate domain.
 SLUG_CLEANUP_REGEX = r"[^a-z0-9]"
 
