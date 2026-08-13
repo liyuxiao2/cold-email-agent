@@ -3,8 +3,31 @@ from unittest.mock import MagicMock, patch
 from cold_email.workers.research.helpers.email_finder import (
     domain_from_url,
     find_email,
+    looks_like_person_name,
     should_accept_email,
 )
+
+
+def test_looks_like_person_name():
+    # Clean two/three-word names pass.
+    assert looks_like_person_name("Daniel Khachab") is True
+    assert looks_like_person_name("Mary Anne O'Brien") is True
+    # The junk the LLM actually produced in prod is rejected.
+    assert looks_like_person_name("the five founders") is False
+    assert looks_like_person_name("not found") is False
+    assert looks_like_person_name("Yaser Sheikh, Russ Salakhutdinov, Chuck Hoover") is False
+    assert looks_like_person_name(
+        "Aziz Gilani is not the founder but is on the Board of Directors."
+    ) is False
+    assert looks_like_person_name("") is False
+    assert looks_like_person_name(None) is False
+    assert looks_like_person_name("Madonna") is False  # single word, not First Last
+
+
+def test_find_email_skips_hunter_for_junk_name():
+    with patch("cold_email.workers.research.helpers.email_finder.requests.get") as get:
+        assert find_email("the five founders", "acme.com") is None
+        get.assert_not_called()
 
 
 def test_domain_from_url_strips_scheme_www_and_path():

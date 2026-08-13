@@ -7,6 +7,7 @@ after LLM extraction and persist the result, so drafting has a real address.
 """
 
 import logging
+import re
 from urllib.parse import urlparse
 
 import requests
@@ -20,6 +21,35 @@ from cold_email.workers.research.constants import (
 
 logger = logging.getLogger(__name__)
 
+# Tokens that signal the LLM returned a non-name (title, hedge, or placeholder)
+# rather than a person. Matched case-insensitively against whole words.
+_NON_NAME_TOKENS = {
+    "not", "founder", "founders", "ceo", "cto", "coo", "cofounder", "co-founder",
+    "the", "team", "board", "director", "directors", "unknown", "none", "na",
+    "n/a", "unclear", "unnamed", "and",
+}
+_NAME_WORD = re.compile(r"^[A-Za-z][A-Za-z.'-]*$")
+
+
+def looks_like_person_name(name: str | None) -> bool:
+    """True if `name` is a plausible single 'First Last' to hand Hunter.
+
+    Hunter's Email Finder needs one clean personal name. The LLM sometimes emits
+    a title, a hedge sentence, or a comma-list of founders; feeding those returns
+    nothing and wastes a call, so we reject anything that isn't 2-4 name-like
+    words free of non-name tokens.
+    """
+    if not name:
+        return False
+    name = name.strip()
+    if "," in name or len(name) > 40:
+        return False
+    words = name.split()
+    if not (2 <= len(words) <= 4):
+        return False
+    if not all(_NAME_WORD.match(w) for w in words):
+        return False
+    return not ({w.lower().strip(".") for w in words} & _NON_NAME_TOKENS)
 
 
 def domain_from_url(url: str | None) -> str | None:
@@ -39,7 +69,10 @@ def find_email(full_name: str | None, domain: str | None) -> dict | None:
     None (missing inputs, no match, or API error — all non-fatal: the caller
     gates on the result). `score` is Hunter's 0-100 deliverability confidence.
     """
-    if not full_name or not domain or not settings.hunter_api_key:
+    if not domain or not settings.hunter_api_key:
+        return None
+    if not looks_like_person_name(full_name):
+        logger.info(f"Skipping Hunter — {full_name!r} is not a usable person name")
         return None
 
     try:
