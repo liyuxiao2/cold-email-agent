@@ -2,9 +2,9 @@ import logging
 from dataclasses import dataclass
 
 from cold_email.database import Lead
-from cold_email.workers.shared.errors import handle_terminal_failure
 from cold_email.workers.research.helpers.db_helpers import fetch_lead
 from cold_email.workers.research.helpers.extraction import find_company_url
+from cold_email.workers.shared.errors import handle_terminal_failure
 
 logger = logging.getLogger(__name__)
 
