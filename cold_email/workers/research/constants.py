@@ -42,3 +42,12 @@ JSON_BLOCK_END_MARKER = "```"
 SLUG_CLEANUP_REGEX = r"[^a-z0-9]"
 DOMAIN_MATCH_SCORE = 1
 DOMAIN_MISMATCH_SCORE = 0
+
+HUNTER_EMAIL_FINDER_URL = "https://api.hunter.io/v2/email-finder"
+HUNTER_TIMEOUT_SECONDS = 15
+# Minimum Hunter confidence (0-100) to accept an email; below this we treat the
+# lead as having no reliable address and fail it fast into the DLQ.
+MIN_EMAIL_SCORE = 25
+
+# Terminal failure reason when research can't resolve a usable founder email.
+ERR_NO_EMAIL_FOUND = "No founder email found (Hunter)"

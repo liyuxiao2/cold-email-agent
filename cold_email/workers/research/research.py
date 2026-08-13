@@ -10,7 +10,13 @@ import logging
 
 from celery import shared_task
 
-from cold_email.workers.research.helpers.db_helpers import commit_research
+from cold_email.workers.research.constants import ERR_NO_EMAIL_FOUND
+from cold_email.workers.research.helpers.db_helpers import commit_research, save_founder_contact
+from cold_email.workers.research.helpers.email_finder import (
+    domain_from_url,
+    find_email,
+    should_accept_email,
+)
 from cold_email.workers.research.helpers.extraction import (
     call_gemini,
     parse_gemini_response,
@@ -23,6 +29,7 @@ from cold_email.workers.shared.constants import (
     GEMINI_RATE_LIMIT,
 )
 from cold_email.workers.shared.db_helpers import update_lead_status
+from cold_email.workers.shared.errors import handle_terminal_failure
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +74,20 @@ def research_task(self, lead_id: str) -> dict:
         raw_content=raw,
     )
 
+    founder_name = research_dict.get("founder_name") or lead.founder_name
+    domain = domain_from_url(lead.company_url or lead_url)
+    email_result = find_email(founder_name, domain)
+
+    if not should_accept_email(email_result):
+        handle_terminal_failure(
+            lead_id,
+            ERR_NO_EMAIL_FOUND,
+            stage="research",
+            task_name="cold_email.workers.research.research_task",
+        )
+        return {"status": "failed", "error": ERR_NO_EMAIL_FOUND}
+
+    save_founder_contact(lead_id, founder_name, email_result["email"])
     update_lead_status(lead_id, status="researched")
 
     return {"status": "success"}

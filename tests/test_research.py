@@ -141,6 +141,8 @@ def test_research_task_persists_raw_llm_text():
         patch(f"{module}.scrape_website", return_value="scraped"),
         patch(f"{module}.call_gemini", return_value=raw),
         patch(f"{module}.commit_research") as commit,
+        patch(f"{module}.find_email", return_value={"email": "ada@acme.com", "score": 90}),
+        patch(f"{module}.save_founder_contact") as save_contact,
         patch(f"{module}.update_lead_status"),
     ):
         result = research_task.apply(args=[FAKE_UUID]).get(propagate=True)
@@ -148,3 +150,31 @@ def test_research_task_persists_raw_llm_text():
     assert result == {"status": "success"}
     assert commit.call_args.kwargs["raw_content"] == raw
     assert commit.call_args.kwargs["tech_stack"] == ["Python"]
+    # An accepted email is persisted on the lead.
+    assert save_contact.call_args.args[2] == "ada@acme.com"
+
+
+def test_research_task_fails_fast_when_no_email():
+    """No usable email -> the lead is dead-lettered at the research stage and
+    never advances to 'researched' (so it doesn't waste the drafting stage)."""
+    resolution = MagicMock(failure=None, url="https://acme.com")
+    resolution.lead = Lead(company_name="Acme")
+    raw = '{"founder_name": "Ada", "tech_stack": [], "recent_news": "", "hook": "h"}'
+
+    module = "cold_email.workers.research.research"
+    with (
+        patch(f"{module}.resolve_lead_url", return_value=resolution),
+        patch(f"{module}.scrape_website", return_value="scraped"),
+        patch(f"{module}.call_gemini", return_value=raw),
+        patch(f"{module}.commit_research"),
+        patch(f"{module}.find_email", return_value=None),  # Hunter found nothing
+        patch(f"{module}.handle_terminal_failure") as terminal,
+        patch(f"{module}.update_lead_status") as update_status,
+    ):
+        result = research_task.apply(args=[FAKE_UUID]).get(propagate=True)
+
+    assert result["status"] == "failed"
+    # Dead-lettered at the research stage...
+    assert terminal.call_args.kwargs["stage"] == "research"
+    # ...and never marked 'researched'.
+    update_status.assert_not_called()
