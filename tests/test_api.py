@@ -117,19 +117,15 @@ async def test_trigger_drafting():
 
 
 @pytest.mark.asyncio
-async def test_trigger_research_requeues_found_and_failed():
+async def test_trigger_research_requeues_found_leads():
+    """Requeues only 'found' (orphaned, never-researched) leads. Terminally
+    'failed' leads are recovered separately via the dead-letter queue."""
     found_lead = MagicMock(spec=Lead)
     found_lead.id = "00000000-0000-0000-0000-000000000001"
     found_lead.status = "found"
-    found_lead.error_msg = None
-
-    failed_lead = MagicMock(spec=Lead)
-    failed_lead.id = "00000000-0000-0000-0000-000000000002"
-    failed_lead.status = "failed"
-    failed_lead.error_msg = "Could not find company URL for lead"
 
     mock_scalars = MagicMock()
-    mock_scalars.all.return_value = [found_lead, failed_lead]
+    mock_scalars.all.return_value = [found_lead]
     mock_result = MagicMock()
     mock_result.scalars.return_value = mock_scalars
 
@@ -145,13 +141,8 @@ async def test_trigger_research_requeues_found_and_failed():
     assert response.status_code == 200
     data = response.json()
     assert data["success"] is True
-    assert data["requeued"] == 2
-    # The failed lead is reset to a clean slate before retrying.
-    assert failed_lead.status == "found"
-    assert failed_lead.error_msg is None
-    # Both leads are dispatched, and only after the status reset is committed.
-    mock_db.commit.assert_awaited_once()
-    assert mock_delay.call_count == 2
+    assert data["requeued"] == 1
+    assert mock_delay.call_count == 1
 
 
 @pytest.mark.asyncio
