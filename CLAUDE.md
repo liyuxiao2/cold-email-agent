@@ -1,6 +1,6 @@
 # Cold Email Agent — System & Architecture Guide
 
-Autonomous cold email outreach system: discovers early-stage startups from directory listing pages via Firecrawl, researches each company and founder using Brave Search, web scraping, and Google Gemini LLM, generates personalized email drafts pausing in a human review queue, and sends approved drafts via the Gmail API.
+Autonomous cold email outreach system: discovers early-stage startups from directory listing pages via Firecrawl, researches each company and founder using DuckDuckGo (keyless web search), web scraping, and a provider-agnostic LLM layer (Groq + Google Gemini with automatic failover), generates personalized email drafts pausing in a human review queue, and sends approved drafts via the Gmail API.
 
 ---
 
@@ -47,6 +47,7 @@ The entire production stack runs 24/7 in Google Cloud and Vercel:
 | **Review Queue** | [`/api/leads/drafts`](https://cold-email-backend-426138953095.us-central1.run.app/api/leads/drafts) | Drafted leads pending human review |
 | **Trigger Discovery** | `POST /api/pipeline/discovery` | Enqueues a new startup discovery sweep |
 | **Trigger Drafting** | `POST /api/pipeline/drafting` | Enqueues a batch sweep drafting emails for researched leads |
+| **Requeue Research** | `POST /api/pipeline/research` | Re-dispatches research for leads stuck in `found`/`failed` (recovers orphaned leads) |
 | **Approve Lead** | `POST /api/leads/{id}/approve` | Approves draft and dispatches `logistics_task` (Gmail send) |
 | **Reject Lead** | `POST /api/leads/{id}/reject` | Marks lead as rejected with optional notes |
 | **Regenerate Draft** | `POST /api/leads/{id}/regenerate` | Resets lead to `researched` and triggers re-drafting |
@@ -75,22 +76,36 @@ The entire production stack runs 24/7 in Google Cloud and Vercel:
    - Also scheduled via Celery Beat every Monday at 8:00 AM.
 
 2. **Research (`cold_email.workers.research.research_task`)**:
-   - Resolves official company website using Brave Search API.
-   - Scrapes `/about`, `/team`, and homepage content using Firecrawl / BeautifulSoup.
-   - Calls Google Gemini LLM (`gemini-2.5-flash`) to extract tech stack, recent news, value hook, and founder name.
+   - Resolves the official company website via DuckDuckGo (`ddgs`, keyless) — candidates scored by `select_best_url` (aggregator blocklist + slug match). Non-fatal search errors propagate so the task retries instead of terminally failing the lead.
+   - Scrapes `/about`, `/team`, and homepage content using BeautifulSoup, falling back to Firecrawl.
+   - Calls the LLM via `generate_json` (see provider-agnostic layer below) to extract tech stack, recent news, and an interest hook.
    - Updates `research` table and marks `lead.status = 'researched'`.
+   - Recoverable: `POST /api/pipeline/research` re-dispatches research for leads stuck in `found`/`failed` (discovery only enqueues research for brand-new leads).
 
 3. **Drafting Sweep (`cold_email.workers.drafting.drafting_task`)**:
    - Batch sweep: queries the `pending_drafts` database view for all leads that reached `status = 'researched'`.
-   - Generates personalized subject lines and email body using Gemini.
+   - Generates a personalized subject line and body via `generate_json`, pacing calls under the LLM free-tier limits.
    - Creates a Gmail draft in your mailbox via Gmail API (`create_draft`) and saves `gmail_draft_id`.
    - Advances lead to `status = 'drafted'` (held in review queue).
    - Scheduled via Celery Beat to sweep every 15 minutes.
 
 4. **Logistics (`cold_email.workers.logistics.logistics_task`)**:
-   - Event-driven per lead: triggered when human clicks **Approve** on the dashboard.
+   - Event-driven per lead: triggered when human clicks **Approve** in the frontend (`POST /api/leads/{id}/approve`).
    - Sends the stored Gmail draft via Gmail API (`send_draft`).
    - Advances lead to `status = 'sent'`.
+
+---
+
+## 🤖 Provider-Agnostic LLM Layer (`cold_email.workers.shared.llm`)
+
+Every model call goes through `generate_json(system, prompt, schema) -> str`. The
+narrow waist hides provider specifics; swapping models is just editing
+`settings.model_fallback_chain`.
+
+- **`_provider_for(model)`** routes a model name to its adapter — `gemini*` → `GeminiProvider`, `llama*` → `GroqProvider`, else `ValueError` (fail loud on a typo).
+- **Fallback:** `generate_json` walks the chain in order; a model that returns `429` (quota exhausted) or `404` (retired/unavailable) is skipped and the next is tried. Any other error re-raises immediately; if the whole chain is exhausted the last error propagates so the Celery task retries later.
+- **Chain** is ordered most-generous-first (per-model free-tier RPM/RPD) and can mix providers, e.g. `["llama-3.3-70b-versatile", "gemini-3.5-flash-lite"]`. Override via the `MODEL_FALLBACK_CHAIN` env var (JSON array); empty falls back to `[MODEL_NAME]`.
+- Structured output: Gemini uses native `response_schema`; Groq (no schema binding) injects the JSON schema into the system prompt with `json_object` mode.
 
 ---
 
@@ -115,9 +130,19 @@ CELERY_BROKER_URL=redis://10.110.4.35:6379/0
 CELERY_RESULT_BACKEND=redis://10.110.4.35:6379/1
 
 # AI & Scraping APIs
-FIRECRAWL_API_KEY=fc-...
-GEMINI_API_KEY=AQ...
-BRAVE_API_KEY=...
+FIRECRAWL_API_KEY=fc-...              # scraping (research fallback)
+GEMINI_API_KEY=AQ...                 # Gemini provider
+GROQ_API_KEY=gsk_...                 # Groq provider (llama models in the fallback chain)
+# URL discovery uses DuckDuckGo (ddgs) — keyless, no API key needed.
+# Optional: MODEL_FALLBACK_CHAIN=["llama-3.3-70b-versatile","gemini-3.5-flash-lite"]
+# Optional: MODEL_NAME=gemini-flash-latest   (default single model when chain unset)
+
+# Gmail API — OAuth2 refresh-token flow (headless send from a single mailbox).
+# Mint these once with: uv run python scripts/gmail_auth.py --client-secret <client.json>
+GMAIL_CLIENT_ID=...
+GMAIL_CLIENT_SECRET=...
+GMAIL_REFRESH_TOKEN=...
+GMAIL_SENDER_EMAIL=...
 
 # Sender Identity
 SENDER_NAME="Liyu Xiao"
