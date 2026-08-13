@@ -89,6 +89,7 @@ def drafting_task(self) -> dict:
                 to=row.founder_email,
                 subject=draft["subject"],
                 body=draft["body"],
+                html=draft.get("body_html"),
             )
             commit_draft(
                 lead_id=lead_id,

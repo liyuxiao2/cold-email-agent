@@ -39,7 +39,11 @@ def test_drafting_sweep_happy_path():
         ),
         patch(
             "cold_email.workers.drafting.drafting.draft_email",
-            return_value={"subject": "Hi", "body": "A specific, short note."},
+            return_value={
+                "subject": "Hi",
+                "body": "A specific, short note.",
+                "body_html": "<p>A specific, short note.</p>",
+            },
         ),
         patch(
             "cold_email.workers.drafting.drafting.create_draft", return_value="gmail-123"
@@ -51,7 +55,12 @@ def test_drafting_sweep_happy_path():
         result = drafting_task.apply(args=[]).get(propagate=True)
 
     assert result == {"status": "success", "drafted": 1}
-    mock_create.assert_called_once_with(to="founder@acme.com", subject="Hi", body="A specific, short note.")
+    mock_create.assert_called_once_with(
+        to="founder@acme.com",
+        subject="Hi",
+        body="A specific, short note.",
+        html="<p>A specific, short note.</p>",
+    )
     mock_commit.assert_called_once()
     mock_status.assert_called_once_with(LEAD_A, "drafted")
 

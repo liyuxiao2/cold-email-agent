@@ -87,8 +87,8 @@ The entire production stack runs 24/7 in Google Cloud and Vercel:
 
 3. **Drafting Sweep (`cold_email.workers.drafting.drafting_task`)**:
    - Batch sweep: queries the `pending_drafts` database view for all leads that reached `status = 'researched'`.
-   - Generates a personalized subject line and body via `generate_json`, pacing calls under the LLM free-tier limits.
-   - Creates a Gmail draft in your mailbox via Gmail API (`create_draft`) and saves `gmail_draft_id`.
+   - **Template-driven, not freeform.** A fixed candidate-outreach template (`prompts/email_template.py`) owns structure/tone; the LLM (via `generate_json` with the `EmailDraftContext` schema) fills only the *contextual slots* — subject, a company-interest phrase, an admiration detail, and the 3 most-relevant experience bullets tailored per company from `sender_profile.PROFILE.experience_pool`. `assemble_email` fills the template (`fill_template` raises on any unfilled `{{token}}`) and renders HTML + a plain-text fallback (`helpers/html_builder.py`). A missing LLM field → `assemble_email` returns `{}` → terminal for that lead. Calls paced under the free-tier limit.
+   - Creates a **multipart** Gmail draft via `create_draft(to, subject, body, html=...)` (plain fallback + rich HTML with bold, a bullet list, and clickable GitHub/LinkedIn links) and saves `gmail_draft_id`.
    - Advances lead to `status = 'drafted'` (held in review queue).
    - Scheduled via Celery Beat to sweep every 15 minutes.
 

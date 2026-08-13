@@ -1,37 +1,48 @@
+"""LLM contract for candidate-outreach drafting.
+
+The model does NOT write the whole email — the template (email_template.py) owns
+structure and tone. The model returns only the *contextual* pieces via the
+EmailDraftContext schema: the subject, the two company-specific interest phrases,
+and a tailored selection of the sender's experience bullets. Everything else is
+filled deterministically. Schema flows through the provider-agnostic generate_json
+layer (Gemini response_schema / Groq field-guide).
+"""
+
 from pydantic import BaseModel, Field
 
-from cold_email.config import settings
+RECIPIENT_TITLE = "Founder"  # startups.gallery leads are founders; no title column upstream.
 
 EMAIL_DRAFT_SYSTEM = (
-    "You write short cold emails from a software engineer to a startup founder. "
-    "The point is to convey genuine, specific interest in what THE COMPANY is "
-    "building — not to pitch the sender. It should read like it's from someone who "
-    "is authentically excited about their work and wants to be part of it.\n\n"
+    "You fill the contextual slots of a fixed candidate-outreach email a software "
+    "engineer sends to a startup founder. You do NOT write the whole email — only "
+    "the fields requested.\n\n"
     "Rules:\n"
-    "- Open on a specific, concrete detail about the company's work (a recent raise, "
-    "launch, or technical bet). No filler openers ('I hope this finds you well').\n"
-    "- Lead with WHY their work is compelling to the sender — curiosity about what "
-    "they're building, not the sender's skills.\n"
-    "- Do NOT pitch the sender's experience, list qualifications, or say what they "
-    "could 'add', 'help with', or 'bring'. At most one brief, natural mention of "
-    "relevant background — never the focus, never a value proposition.\n"
-    "- Specific over generic. No buzzwords, no flattery that could apply to any "
-    "company. Only use facts from the provided research; never invent details.\n"
-    "- Body ≤ 120 words.\n"
-    "- Tone: a sharp peer who genuinely admires the work, not a job applicant.\n"
-    "- End with one low-friction ask: a short conversation to hear more about the "
-    "work. Don't mention 'internship' or 'opportunity'."
+    "- `company_interest`: complete the sentence 'I'm particularly interested in ...' "
+    "with a specific aspect of what THIS company builds (e.g. 'how Turo handles "
+    "car-sharing marketplace technology'). Use only the provided research; never "
+    "invent products or facts.\n"
+    "- `admiration_detail`: complete 'I'm drawn to ...' with a concrete, non-generic "
+    "detail (a technical bet, culture, or recent milestone). No flattery that could "
+    "apply to any company.\n"
+    "- `tailored_bullets`: choose the 3 experience bullets from the provided pool that "
+    "are MOST relevant to this company, ordered most-relevant first. Return each as a "
+    "'Label: achievement' string. You may lightly rephrase for relevance, but never "
+    "fabricate achievements or change the numbers.\n"
+    "- `subject`: a short, specific subject line referencing the company by name. No "
+    "clickbait, no 'opportunity'.\n"
+    "- Specific over generic throughout."
 )
 
-class EmailDraft(BaseModel):
-    """Generated cold email — used as the Gemini response_schema."""
 
-    subject: str = Field(description="Email subject line")
-    body: str = Field(description="Email body, ≤ 150 words")
+class EmailDraftContext(BaseModel):
+    """Contextual slots the LLM fills; the template supplies everything else."""
 
-
-# startups.gallery leads are founders and there's no title column upstream.
-RECIPIENT_TITLE = "Founder"
+    subject: str = Field(description="Short, company-specific subject line")
+    company_interest: str = Field(description="Completes 'I'm particularly interested in ...'")
+    admiration_detail: str = Field(description="Completes 'I'm drawn to ...'")
+    tailored_bullets: list[str] = Field(
+        description="Exactly 3 'Label: achievement' strings, most-relevant first"
+    )
 
 
 def build_email_draft_messages(
@@ -40,17 +51,15 @@ def build_email_draft_messages(
     tech_stack: list[str],
     recent_news: str,
     hook: str,
+    experience_pool: list[str],
 ) -> str:
-    """Build the drafting prompt. Sender identity comes from settings and the
-    recipient title is defaulted, so callers only pass the recipient/research
-    fields."""
+    """Build the drafting prompt: company research + the sender's experience pool."""
+    pool = "\n".join(f"- {b}" for b in experience_pool)
     return (
-        f"Company: {company_name} (founder: {founder_name}, {RECIPIENT_TITLE})\n"
+        f"Company: {company_name} (recipient: {founder_name}, {RECIPIENT_TITLE})\n"
         f"What they're building / recent news: {recent_news}\n"
         f"Why their work is compelling: {hook}\n"
         f"Their tech stack: {', '.join(tech_stack)}\n\n"
-        f"Sign the email as {settings.sender_name}, {settings.sender_role} "
-        f"at {settings.sender_company}. The email is about their work, not the "
-        "sender — keep any mention of the sender to the sign-off.\n\n"
-        "Write the subject line and email body."
+        f"Sender's experience pool (choose the 3 most relevant):\n{pool}\n\n"
+        "Fill the requested fields."
     )
