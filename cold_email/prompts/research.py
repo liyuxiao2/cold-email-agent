@@ -16,8 +16,12 @@ class ResearchExtraction(BaseModel):
 
     founder_name: str = Field(
         description=(
-            "Full name of the founder or CEO if identifiable from the content "
-            "(e.g. an about/team page). Empty string if not found — do not guess."
+            "The full name of exactly ONE person — the primary founder or CEO — "
+            "as 'First Last' (e.g. 'Jane Smith'). If there are multiple founders, "
+            "pick the CEO or the first listed. Return an empty string if you "
+            "cannot identify a single clear name. NEVER return a title, a "
+            "sentence, a list of names, or phrases like 'not found' / 'the "
+            "founders' — an empty string is required in those cases."
         )
     )
     tech_stack: list[str] = Field(

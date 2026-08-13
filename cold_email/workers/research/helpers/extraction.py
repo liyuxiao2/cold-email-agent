@@ -23,8 +23,6 @@ from cold_email.prompts.research import (
 )
 from cold_email.workers.research.constants import (
     AGGREGATOR_BLOCKLIST,
-    DOMAIN_MATCH_SCORE,
-    DOMAIN_MISMATCH_SCORE,
     HTTP_STATUS_OK,
     JSON_BLOCK_END_MARKER,
     JSON_BLOCK_START_MARKER,
@@ -57,28 +55,39 @@ def find_company_url(lead: Lead) -> str | None:
     return select_best_url(candidates, lead)
 
 
+def is_probable_homepage(url: str | None, company_name: str) -> bool:
+    """True if `url`'s domain looks like `company_name`'s own homepage.
+
+    A domain qualifies only if it is NOT a known aggregator/accelerator/news
+    site AND its slug contains the company-name slug. Used to validate both the
+    DDG search results and the discovery-scraped company_url, so a wrong domain
+    never cascades into scraping, LLM extraction, or the Hunter email lookup.
+    """
+    if not url:
+        return False
+    domain = urlparse(url).netloc.lower().removeprefix("www.")
+    if not domain or any(blocked in domain for blocked in AGGREGATOR_BLOCKLIST):
+        return False
+    company_slug = re.sub(SLUG_CLEANUP_REGEX, "", company_name.lower())
+    if not company_slug:
+        return False
+    domain_slug = re.sub(SLUG_CLEANUP_REGEX, "", domain)
+    return company_slug in domain_slug
+
+
 def select_best_url(results: list[dict], lead: Lead) -> str | None:
-    """Score search results and return the URL most likely to be the company homepage."""
-    if not results:
-        return None
+    """Return the first result that looks like the company's homepage, else None.
 
-    company_slug = re.sub(SLUG_CLEANUP_REGEX, "", lead.company_name.lower())
-
-    scored: list[tuple[int, str]] = []
+    Only a domain that slug-matches the company (and isn't an aggregator) is
+    treated as the homepage — see is_probable_homepage. When nothing matches,
+    return None so the lead fails honestly as "no company URL" rather than on a
+    guess. Results are already in search-relevance order.
+    """
     for result in results:
         url = result.get("url", "")
-        domain = urlparse(url).netloc.lower().removeprefix("www.")
-        if any(blocked in domain for blocked in AGGREGATOR_BLOCKLIST):
-            continue
-        domain_slug = re.sub(SLUG_CLEANUP_REGEX, "", domain)
-        score = DOMAIN_MATCH_SCORE if company_slug in domain_slug else DOMAIN_MISMATCH_SCORE
-        scored.append((score, url))
-
-    if not scored:
-        return results[0].get("url")
-
-    scored.sort(key=lambda x: x[0], reverse=True)
-    return scored[0][1]
+        if is_probable_homepage(url, lead.company_name):
+            return url
+    return None
 
 
 def scrape_website(lead_url: str) -> str:
