@@ -164,3 +164,53 @@ async def test_approve_lead():
     assert response.json()["success"] is True
     assert response.json()["status"] == "approved"
     assert mock_lead.status == "approved"
+
+
+@pytest.mark.asyncio
+async def test_draft_review_queue_returns_newest_draft():
+    """After a regenerate, the review queue must show the NEWEST draft, even when
+    every draft row shares version=1 (version is vestigial). Selection is by
+    created_at, consistent with the pending_sends view used for sending."""
+    from datetime import datetime, timezone
+
+    def _draft(body, gmail_id, when):
+        d = MagicMock()
+        d.id = gmail_id
+        d.subject_line = "s"
+        d.body = body
+        d.version = 1  # every draft is v1 — the bug's precondition
+        d.gmail_draft_id = gmail_id
+        d.created_at = when
+        return d
+
+    old = _draft("OLD freeform body", "gmail-old", datetime(2026, 8, 13, 0, 58, tzinfo=timezone.utc))
+    new = _draft("Hi Kenny, new template", "gmail-new", datetime(2026, 8, 13, 1, 50, tzinfo=timezone.utc))
+
+    lead = MagicMock(spec=Lead)
+    lead.id = "00000000-0000-0000-0000-00000000000a"
+    lead.company_name = "Turo"
+    lead.founder_name = "Kenny"
+    lead.founder_email = "k@turo.com"
+    lead.company_url = "https://turo.com"
+    lead.linkedin_url = None
+    lead.funding_stage = None
+    lead.headcount = None
+    lead.status = "drafted"
+    lead.created_at = datetime(2026, 8, 13, 0, 0, tzinfo=timezone.utc)
+    lead.drafts = [old, new]  # oldest FIRST — trips max(key=version) tie
+    lead.research = []
+
+    mock_db = AsyncMock()
+    result = MagicMock()
+    result.scalars.return_value.all.return_value = [lead]
+    mock_db.execute.return_value = result
+    app.dependency_overrides[get_async_session] = lambda: mock_db
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        response = await ac.get("/api/leads/drafts")
+
+    app.dependency_overrides.clear()
+    assert response.status_code == 200
+    draft = response.json()[0]["draft"]
+    assert draft["gmail_draft_id"] == "gmail-new"
+    assert draft["body"] == "Hi Kenny, new template"
