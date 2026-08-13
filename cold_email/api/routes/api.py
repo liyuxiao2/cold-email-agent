@@ -58,7 +58,10 @@ async def get_draft_review_queue(session: AsyncSession = Depends(get_async_sessi
 
     items = []
     for lead in leads:
-        latest_draft = max(lead.drafts, key=lambda d: d.version, default=None)
+        # Newest draft by created_at — consistent with the pending_sends view.
+        # (version is vestigial: commit_draft leaves it =1, so keying on version
+        # returns a stale row after a regenerate.)
+        latest_draft = max(lead.drafts, key=lambda d: d.created_at, default=None)
         latest_research = max(lead.research, key=lambda r: r.created_at, default=None) if lead.research else None
 
         items.append({
@@ -122,7 +125,10 @@ async def list_leads(
 
     items = []
     for lead in leads:
-        latest_draft = max(lead.drafts, key=lambda d: d.version, default=None)
+        # Newest draft by created_at — consistent with the pending_sends view.
+        # (version is vestigial: commit_draft leaves it =1, so keying on version
+        # returns a stale row after a regenerate.)
+        latest_draft = max(lead.drafts, key=lambda d: d.created_at, default=None)
         latest_research = max(lead.research, key=lambda r: r.created_at, default=None) if lead.research else None
 
         items.append({
