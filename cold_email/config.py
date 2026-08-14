@@ -17,9 +17,6 @@ class Settings(BaseSettings):
     celery_result_backend: str = "redis://localhost:6379/1"
 
     firecrawl_api_key: str = ""
-    anthropic_api_key: str = ""
-    instantly_api_key: str = ""
-    instantly_campaign_id: str = ""
     gemini_api_key: str = ""
     groq_api_key: str = ""
     hunter_api_key: str = ""
@@ -30,10 +27,8 @@ class Settings(BaseSettings):
     gmail_refresh_token: str = ""
     gmail_sender_email: str = ""
 
-    # Sender identity injected into the email-draft prompt
-    sender_name: str = "Liyu Xiao"
-    sender_role: str = "Software Engineer, Ledger Team"
-    sender_company: str = "Wealthsimple"
+    # Sender identity lives in cold_email.sender_profile.PROFILE (the drafting
+    # template reads it from there), not here.
 
     discovery_leads_per_run: int = 20
 
