@@ -30,7 +30,7 @@ from cold_email.workers.shared.views import PendingDraft
 logger = logging.getLogger(__name__)
 
 # Context fields required to assemble a complete email; missing any → terminal.
-_REQUIRED = ("subject", "company_interest", "admiration_detail", "tailored_bullets")
+_REQUIRED = ("subject", "company_interest", "admiration_detail", "intro", "tailored_bullets")
 
 
 def draft_email(row: PendingDraft) -> dict:
@@ -53,7 +53,7 @@ def generate_email(row: PendingDraft) -> str:
         tech_stack=tech_stack,
         recent_news=row.recent_news or "",
         hook=row.hook or "",
-        experience_pool=PROFILE.experience_pool,
+        resume_text=PROFILE.effective_resume_text,
     )
     return generate_json(system=EMAIL_DRAFT_SYSTEM, prompt=messages, schema=EmailDraftContext)
 
@@ -72,10 +72,23 @@ def parse_email_response(raw: str) -> dict:
         return {}
 
 
-def _bullet_md(bullet: str) -> str:
-    """Render 'Label: achievement' as a bold-label markdown bullet."""
+def _bullet_md(bullet: str, profile: SenderProfile) -> str:
+    """Render 'Label: achievement' as a bold-label markdown bullet, adding links if available."""
     label, sep, rest = bullet.partition(": ")
-    return f"- **{label}:** {rest}" if sep else f"- {bullet}"
+    if not sep:
+        return f"- {bullet}"
+
+    clean_label = label.strip()
+    link = profile.company_links.get(clean_label)
+    if not link:
+        for k, v in profile.company_links.items():
+            if k.lower() == clean_label.lower():
+                link = v
+                break
+
+    if link:
+        return f"- **[{label}]({link}):** {rest}"
+    return f"- **{label}:** {rest}"
 
 
 def assemble_email(context: dict, row: PendingDraft, profile: SenderProfile) -> dict:
@@ -87,11 +100,11 @@ def assemble_email(context: dict, row: PendingDraft, profile: SenderProfile) -> 
     if not all(context.get(k) for k in _REQUIRED):
         return {}
 
-    bullets = "\n".join(_bullet_md(b) for b in context["tailored_bullets"])
+    bullets = "\n".join(_bullet_md(b, profile) for b in context["tailored_bullets"])
     first_name = row.founder_name.split()[0] if row.founder_name else "there"
     values = {
         "first_name": first_name,
-        "intro": profile.intro,
+        "intro": context["intro"],
         "company_interest": context["company_interest"],
         "admiration_detail": context["admiration_detail"],
         "experience_bullets": bullets,
