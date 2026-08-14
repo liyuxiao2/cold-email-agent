@@ -85,11 +85,23 @@ def drafting_task(self) -> dict:
                 )
                 continue
 
+            from pathlib import Path
+
+            resume_path = Path(__file__).resolve().parent.parent.parent / "resume.pdf"
+            if not resume_path.exists():
+                logger.warning(
+                    f"Resume PDF not found at {resume_path}; creating draft without attachment"
+                )
+                attachment_path = None
+            else:
+                attachment_path = str(resume_path)
+
             gmail_draft_id = create_draft(
                 to=row.founder_email,
                 subject=draft["subject"],
                 body=draft["body"],
                 html=draft.get("body_html"),
+                attachment_path=attachment_path,
             )
             commit_draft(
                 lead_id=lead_id,

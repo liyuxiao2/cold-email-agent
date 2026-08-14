@@ -35,7 +35,13 @@ def _build_service():
     return build("gmail", "v1", credentials=creds)
 
 
-def create_draft(to: str, subject: str, body: str, html: str | None = None) -> str:
+def create_draft(
+    to: str,
+    subject: str,
+    body: str,
+    html: str | None = None,
+    attachment_path: str | None = None,
+) -> str:
     """Create a Gmail draft in the sender's mailbox and return its draft ID.
 
     The Gmail API wants the whole RFC 2822 message base64url-encoded as `raw`.
@@ -49,6 +55,20 @@ def create_draft(to: str, subject: str, body: str, html: str | None = None) -> s
     message.set_content(body)
     if html:
         message.add_alternative(html, subtype="html")
+
+    if attachment_path:
+        import mimetypes
+        from pathlib import Path
+
+        path = Path(attachment_path)
+        ctype, encoding = mimetypes.guess_type(str(path))
+        if ctype is None or encoding is not None:
+            ctype = "application/octet-stream"
+        maintype, subtype = ctype.split("/", 1)
+        filename = path.name
+        with path.open("rb") as fp:
+            file_data = fp.read()
+        message.add_attachment(file_data, maintype=maintype, subtype=subtype, filename=filename)
 
     raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
 

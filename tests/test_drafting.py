@@ -53,12 +53,13 @@ def test_drafting_sweep_happy_path():
         result = drafting_task.apply(args=[]).get(propagate=True)
 
     assert result == {"status": "success", "drafted": 1}
-    mock_create.assert_called_once_with(
-        to="founder@acme.com",
-        subject="Hi",
-        body="A specific, short note.",
-        html="<p>A specific, short note.</p>",
-    )
+    _, kwargs = mock_create.call_args
+    assert kwargs["to"] == "founder@acme.com"
+    assert kwargs["subject"] == "Hi"
+    assert kwargs["body"] == "A specific, short note."
+    assert kwargs["html"] == "<p>A specific, short note.</p>"
+    assert "attachment_path" in kwargs
+    assert kwargs["attachment_path"].endswith("cold_email/resume.pdf")
     mock_commit.assert_called_once()
     mock_status.assert_called_once_with(LEAD_A, "drafted")
 

@@ -66,12 +66,14 @@ class Settings(BaseSettings):
     @computed_field
     @property
     def discovery_urls(self) -> list[str]:
-        """Build one startups.gallery URL per industry."""
+        """Build the news page URL followed by one startups.gallery URL per industry."""
         base = "https://startups.gallery/categories/industries"
-        return [
+        urls = ["https://startups.gallery/news"]
+        urls.extend(
             f"{base}/{name.lower().replace(' & ', '-').replace(' ', '-')}"
             for name in self.industries
-        ]
+        )
+        return urls
 
     cors_origins: list[str] = ["*"]
 
