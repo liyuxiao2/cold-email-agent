@@ -47,8 +47,10 @@ cp .env.example .env
 
 Edit `.env` and fill in your API keys:
 - `FIRECRAWL_API_KEY` - get from [firecrawl.dev](https://firecrawl.dev)
-- `ANTHROPIC_API_KEY` - get from [console.anthropic.com](https://console.anthropic.com)
-- `INSTANTLY_API_KEY` - get from [instantly.ai](https://instantly.ai)
+- `GEMINI_API_KEY` - get from [aistudio.google.com](https://aistudio.google.com/apikey)
+- `GROQ_API_KEY` - get from [console.groq.com](https://console.groq.com/keys)
+- `HUNTER_API_KEY` - get from [hunter.io](https://hunter.io) (founder email discovery)
+- `GMAIL_*` - OAuth2 refresh-token flow; mint with `uv run python scripts/gmail_auth.py`
 
 ### 3. Run everything
 
