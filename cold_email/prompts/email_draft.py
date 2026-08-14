@@ -24,10 +24,14 @@ EMAIL_DRAFT_SYSTEM = (
     "- `admiration_detail`: complete 'I'm drawn to ...' with a concrete, non-generic "
     "detail (a technical bet, culture, or recent milestone). No flattery that could "
     "apply to any company.\n"
-    "- `tailored_bullets`: choose the 3 experience bullets from the provided pool that "
+    "- `intro`: write a tailored first-person introduction sentence (e.g., 'My name is Liyu, a CS student at McMaster...') "
+    "that highlights relevant aspects of your background (from the resume) that align with "
+    "the company's domain, tech stack, or challenges. Keep it to exactly one sentence, professional, "
+    "and natural-sounding.\n"
+    "- `tailored_bullets`: choose or generate the 3 experience bullets from the provided resume that "
     "are MOST relevant to this company, ordered most-relevant first. Return each as a "
-    "'Label: achievement' string. You may lightly rephrase for relevance, but never "
-    "fabricate achievements or change the numbers.\n"
+    "'Label: achievement' string (where Label is the company/project name, e.g., 'Wealthsimple: Developed a financial hold...'). "
+    "You may lightly rephrase/tailor them for relevance, but never fabricate achievements or change the numbers/facts.\n"
     "- `subject`: a short, specific subject line referencing the company by name. No "
     "clickbait, no 'opportunity'.\n"
     "- Specific over generic throughout."
@@ -40,8 +44,11 @@ class EmailDraftContext(BaseModel):
     subject: str = Field(description="Short, company-specific subject line")
     company_interest: str = Field(description="Completes 'I'm particularly interested in ...'")
     admiration_detail: str = Field(description="Completes 'I'm drawn to ...'")
+    intro: str = Field(
+        description="A tailored, professional first-person introduction sentence based on the resume and company context"
+    )
     tailored_bullets: list[str] = Field(
-        description="Exactly 3 'Label: achievement' strings, most-relevant first"
+        description="Exactly 3 'Label: achievement' strings selected and tailored from the resume, ordered most-relevant first, "
     )
 
 
@@ -51,15 +58,15 @@ def build_email_draft_messages(
     tech_stack: list[str],
     recent_news: str,
     hook: str,
-    experience_pool: list[str],
+    resume_text: str,
 ) -> str:
-    """Build the drafting prompt: company research + the sender's experience pool."""
-    pool = "\n".join(f"- {b}" for b in experience_pool)
+    """Build the drafting prompt: company research + the sender's full resume."""
     return (
         f"Company: {company_name} (recipient: {founder_name}, {RECIPIENT_TITLE})\n"
         f"What they're building / recent news: {recent_news}\n"
         f"Why their work is compelling: {hook}\n"
         f"Their tech stack: {', '.join(tech_stack)}\n\n"
-        f"Sender's experience pool (choose the 3 most relevant):\n{pool}\n\n"
+        f"Sender's Resume:\n{resume_text}\n\n"
         "Fill the requested fields."
     )
+

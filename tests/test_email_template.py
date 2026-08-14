@@ -25,6 +25,5 @@ def test_fills_all_tokens_leaves_no_placeholders():
 
 
 def test_missing_token_fails_loudly():
-    # A template token with no matching value must NOT silently ship as literal.
     with pytest.raises(ValueError):
         fill_template("Hi {{first_name}}, {{company_interest}}", {"first_name": "K"})
