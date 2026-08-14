@@ -4,10 +4,10 @@ import pytest
 
 from cold_email.database import Lead
 from cold_email.workers.research.helpers.extraction import (
-    call_gemini,
+    call_llm_extraction,
     find_company_url,
     is_probable_homepage,
-    parse_gemini_response,
+    parse_llm_response,
     scrape_website,
     select_best_url,
 )
@@ -97,12 +97,12 @@ def test_find_company_url_propagates_search_errors():
             find_company_url(lead)
 
 
-def test_call_gemini_uses_models_generate_content():
+def test_call_llm_extraction_uses_models_generate_content():
     """Regression guard for the google-genai API shape + provider routing.
 
     generate_content lives on client.models (the service), NOT on the Model
     object returned by client.models.get(). With a Gemini model in the chain,
-    call_gemini must route through GeminiProvider and return the raw JSON text.
+    call_llm_extraction must route through GeminiProvider and return the raw JSON text.
     """
     fake_response = MagicMock()
     fake_response.text = (
@@ -119,7 +119,7 @@ def test_call_gemini_uses_models_generate_content():
         ),
         patch("cold_email.workers.shared.llm.genai.Client", return_value=mock_client),
     ):
-        raw = call_gemini("scraped text", "Acme Corp")
+        raw = call_llm_extraction("scraped text", "Acme Corp")
 
     mock_client.models.generate_content.assert_called_once()
     mock_client.models.get.assert_not_called()
@@ -129,7 +129,7 @@ def test_call_gemini_uses_models_generate_content():
     assert kwargs["config"]["response_mime_type"] == "application/json"
     assert "tools" not in kwargs["config"]
 
-    parsed = parse_gemini_response(raw)
+    parsed = parse_llm_response(raw)
     assert parsed["tech_stack"] == ["Python"]
     assert parsed["hook"] == "Ledger infra"
 
@@ -176,7 +176,7 @@ def test_research_task_lead_not_found():
 
 
 def test_research_task_persists_raw_llm_text():
-    """Regression: call_gemini returns a plain JSON string (not an object with
+    """Regression: call_llm_extraction returns a plain JSON string (not an object with
     .text), so the task must persist that string as raw_content. The old code
     did `response.text` and crashed with AttributeError in prod."""
     resolution = MagicMock(failure=None, url="https://acme.com")
@@ -187,7 +187,7 @@ def test_research_task_persists_raw_llm_text():
     with (
         patch(f"{module}.resolve_lead_url", return_value=resolution),
         patch(f"{module}.scrape_website", return_value="scraped"),
-        patch(f"{module}.call_gemini", return_value=raw),
+        patch(f"{module}.call_llm_extraction", return_value=raw),
         patch(f"{module}.commit_research") as commit,
         patch(f"{module}.find_email", return_value={"email": "ada@acme.com", "score": 90}),
         patch(f"{module}.save_founder_contact") as save_contact,
@@ -213,7 +213,7 @@ def test_research_task_fails_fast_when_no_email():
     with (
         patch(f"{module}.resolve_lead_url", return_value=resolution),
         patch(f"{module}.scrape_website", return_value="scraped"),
-        patch(f"{module}.call_gemini", return_value=raw),
+        patch(f"{module}.call_llm_extraction", return_value=raw),
         patch(f"{module}.commit_research"),
         patch(f"{module}.find_email", return_value=None),  # Hunter found nothing
         patch(f"{module}.handle_terminal_failure") as terminal,

@@ -4,3 +4,4 @@
 # is excluded from future sweeps instead of retried forever.
 ERR_NO_FOUNDER_EMAIL = "No founder email to draft to"
 ERR_EMPTY_DRAFT = "Model returned an empty draft"
+DRAFTING = "drafting"

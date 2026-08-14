@@ -12,7 +12,7 @@ import logging
 
 from celery import shared_task
 
-from cold_email.workers.logistics.constants import ERR_NO_GMAIL_DRAFT
+from cold_email.workers.logistics.constants import ERR_NO_GMAIL_DRAFT, LOGISTICS
 from cold_email.workers.logistics.helpers.db_helpers import fetch_send_inputs
 from cold_email.workers.shared.constants import DEFAULT_MAX_RETRIES, DEFAULT_RETRY_DELAY
 from cold_email.workers.shared.db_helpers import update_lead_status
@@ -46,7 +46,7 @@ def logistics_task(self, lead_id: str) -> dict:
         handle_terminal_failure(
             lead_id,
             ERR_NO_GMAIL_DRAFT,
-            stage="logistics",
+            stage=LOGISTICS,
             task_name="cold_email.workers.logistics.logistics_task",
         )
         return {"status": "failed", "error": ERR_NO_GMAIL_DRAFT}

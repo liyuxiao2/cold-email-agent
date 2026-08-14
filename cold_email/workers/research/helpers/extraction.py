@@ -1,7 +1,7 @@
 """Extraction helpers for the research worker.
 
 Handles all I/O-heavy work: searching for company URLs, scraping web pages,
-and calling the Gemini LLM for structured data extraction.
+and calling the LLM for structured data extraction.
 """
 
 import logging
@@ -116,7 +116,7 @@ def scrape_website(lead_url: str) -> str:
     return ""
 
 
-def call_gemini(text: str, company_name: str) -> str:
+def call_llm_extraction(text: str, company_name: str) -> str:
     """Extract structured research fields from scraped content via the LLM.
 
     Routes through generate_json (provider-agnostic): the configured chain
@@ -129,7 +129,7 @@ def call_gemini(text: str, company_name: str) -> str:
     )
 
 
-def parse_gemini_response(raw: str) -> dict:
+def parse_llm_response(raw: str) -> dict:
     """Parse the structured JSON payload from a raw LLM response string.
 
     Thin wrapper over the shared fail-soft parser; kept as a named entry point

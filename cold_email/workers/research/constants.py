@@ -55,3 +55,5 @@ MIN_EMAIL_SCORE = 25
 
 # Terminal failure reason when research can't resolve a usable founder email.
 ERR_NO_EMAIL_FOUND = "No founder email found (Hunter)"
+
+RESEARCH = "research"

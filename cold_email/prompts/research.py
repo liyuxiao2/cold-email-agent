@@ -8,7 +8,7 @@ EXTRACTION_SYSTEM = (
 
 
 class ResearchExtraction(BaseModel):
-    """Structured research fields — used as the Gemini response_schema.
+    """Structured research fields — used as the LLM response_schema.
 
     Field descriptions are sent to the model as part of the JSON schema, so
     they double as extraction instructions.

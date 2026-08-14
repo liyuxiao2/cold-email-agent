@@ -10,7 +10,7 @@ import logging
 
 from celery import shared_task
 
-from cold_email.workers.research.constants import ERR_NO_EMAIL_FOUND
+from cold_email.workers.research.constants import ERR_NO_EMAIL_FOUND, RESEARCH
 from cold_email.workers.research.helpers.db_helpers import commit_research, save_founder_contact
 from cold_email.workers.research.helpers.email_finder import (
     domain_from_url,
@@ -18,15 +18,15 @@ from cold_email.workers.research.helpers.email_finder import (
     should_accept_email,
 )
 from cold_email.workers.research.helpers.extraction import (
-    call_gemini,
-    parse_gemini_response,
+    call_llm_extraction,
+    parse_llm_response,
     scrape_website,
 )
 from cold_email.workers.research.helpers.preflight import resolve_lead_url
 from cold_email.workers.shared.constants import (
     DEFAULT_MAX_RETRIES,
     DEFAULT_RETRY_DELAY,
-    GEMINI_RATE_LIMIT,
+    LLM_RATE_LIMIT,
 )
 from cold_email.workers.shared.db_helpers import update_lead_status
 from cold_email.workers.shared.errors import handle_terminal_failure
@@ -39,9 +39,9 @@ logger = logging.getLogger(__name__)
     autoretry_for=(Exception,),
     max_retries=DEFAULT_MAX_RETRIES,
     default_retry_delay=DEFAULT_RETRY_DELAY,
-    # Pace per-lead Gemini calls under the free-tier 5 req/min cap so a burst
+    # Pace per-lead LLM calls under the free-tier 5 req/min cap so a burst
     # of requeued leads doesn't 429 itself into repeated retries.
-    rate_limit=GEMINI_RATE_LIMIT,
+    rate_limit=LLM_RATE_LIMIT,
     name="cold_email.workers.research.research_task",
 )
 def research_task(self, lead_id: str) -> dict:
@@ -51,7 +51,7 @@ def research_task(self, lead_id: str) -> dict:
       1. Fetch lead from DB
       2. Search DuckDuckGo to find the company homepage
       3. Scrape homepage with BeautifulSoup (requests.get), fallback to Firecrawl
-      4. Call Gemini Flash for structured extraction
+      4. Call LLM for structured extraction
       5. Insert row into research table, update lead.status = 'researched'
          (the drafting batch sweep picks it up from there — no dispatch here)
     """
@@ -63,8 +63,8 @@ def research_task(self, lead_id: str) -> dict:
     lead, lead_url = resolution.lead, resolution.url
 
     text = scrape_website(lead_url)
-    raw = call_gemini(text, lead.company_name)
-    research_dict = parse_gemini_response(raw)
+    raw = call_llm_extraction(text, lead.company_name)
+    research_dict = parse_llm_response(raw)
 
     commit_research(
         lead_id=lead_id,
@@ -75,8 +75,6 @@ def research_task(self, lead_id: str) -> dict:
     )
 
     founder_name = research_dict.get("founder_name") or lead.founder_name
-    # lead_url is the validated homepage (slug-matched, non-aggregator); use it
-    # for the Hunter domain rather than the raw discovery company_url.
     domain = domain_from_url(lead_url)
     email_result = find_email(founder_name, domain)
 
@@ -84,7 +82,7 @@ def research_task(self, lead_id: str) -> dict:
         handle_terminal_failure(
             lead_id,
             ERR_NO_EMAIL_FOUND,
-            stage="research",
+            stage=RESEARCH,
             task_name="cold_email.workers.research.research_task",
         )
         return {"status": "failed", "error": ERR_NO_EMAIL_FOUND}

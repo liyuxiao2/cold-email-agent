@@ -2,6 +2,7 @@ import logging
 from dataclasses import dataclass
 
 from cold_email.database import Lead
+from cold_email.workers.research.constants import RESEARCH
 from cold_email.workers.research.helpers.db_helpers import fetch_lead
 from cold_email.workers.research.helpers.extraction import find_company_url, is_probable_homepage
 from cold_email.workers.shared.errors import handle_terminal_failure
@@ -36,7 +37,7 @@ def resolve_lead_url(lead_id: str) -> LeadResolution:
         handle_terminal_failure(
             lead_id,
             f"Could not find company URL for {lead.company_name}",
-            stage="research",
+            stage=RESEARCH,
             task_name="cold_email.workers.research.research_task",
         )
         return LeadResolution(

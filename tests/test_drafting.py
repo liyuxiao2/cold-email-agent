@@ -64,7 +64,7 @@ def test_drafting_sweep_happy_path():
 
 
 def test_drafting_skips_lead_without_email():
-    """A lead with no founder_email is marked failed and never sent to Gemini."""
+    """A lead with no founder_email is marked failed and never sent to the LLM."""
     with (
         patch(
             "cold_email.workers.drafting.drafting.fetch_pending_drafts",

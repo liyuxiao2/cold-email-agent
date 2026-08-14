@@ -6,7 +6,7 @@ Triggered on a schedule by Celery Beat (see celery_app.py), so leads that reach
 'researched' between runs are collected on the next tick.
 
 Helpers live in sibling modules:
-  - generation.py  — Gemini email generation
+  - generation.py  — LLM email generation
   - db_helpers.py  — pending_drafts read, draft write
 Shared failure handling lives in cold_email.workers.shared.errors.
 """
@@ -16,7 +16,7 @@ import time
 
 from celery import shared_task
 
-from cold_email.workers.drafting.constants import ERR_EMPTY_DRAFT, ERR_NO_FOUNDER_EMAIL
+from cold_email.workers.drafting.constants import DRAFTING, ERR_EMPTY_DRAFT, ERR_NO_FOUNDER_EMAIL
 from cold_email.workers.drafting.helpers.db_helpers import (
     commit_draft,
     fetch_pending_drafts,
@@ -25,7 +25,7 @@ from cold_email.workers.drafting.helpers.generation import draft_email
 from cold_email.workers.shared.constants import (
     DEFAULT_MAX_RETRIES,
     DEFAULT_RETRY_DELAY,
-    GEMINI_MIN_INTERVAL_SECONDS,
+    LLM_MIN_INTERVAL_SECONDS,
 )
 from cold_email.workers.shared.db_helpers import update_lead_status
 from cold_email.workers.shared.errors import handle_terminal_failure, handle_transient_failure
@@ -49,7 +49,7 @@ def drafting_task(self) -> dict:
       * Terminal (no founder email, empty model output) → handle_terminal_failure
         marks the lead 'failed'. It leaves the 'researched' state, drops out of
         pending_drafts, and won't be retried on the next sweep.
-      * Transient (Gemini/Gmail network hiccup) → handle_transient_failure logs
+      * Transient (LLM/Gmail network hiccup) → handle_transient_failure logs
         and leaves the lead at 'researched'. The next Beat sweep retries it.
 
     autoretry_for only fires for errors *outside* the loop (e.g. the initial
@@ -67,20 +67,20 @@ def drafting_task(self) -> dict:
             handle_terminal_failure(
                 lead_id,
                 ERR_NO_FOUNDER_EMAIL,
-                stage="drafting",
+                stage=DRAFTING,
                 task_name="cold_email.workers.drafting.drafting_task",
             )
             continue
 
         try:
             draft = draft_email(row)
-            time.sleep(GEMINI_MIN_INTERVAL_SECONDS)
+            time.sleep(LLM_MIN_INTERVAL_SECONDS)
 
             if not draft.get("subject") or not draft.get("body"):
                 handle_terminal_failure(
                     lead_id,
                     ERR_EMPTY_DRAFT,
-                    stage="drafting",
+                    stage=DRAFTING,
                     task_name="cold_email.workers.drafting.drafting_task",
                 )
                 continue
