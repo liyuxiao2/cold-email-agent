@@ -26,8 +26,7 @@ class ResearchExtraction(BaseModel):
     )
     tech_stack: list[str] = Field(
         description=(
-            "Technologies mentioned or strongly implied "
-            "(languages, databases, infrastructure)"
+            "Technologies mentioned or strongly implied (languages, databases, infrastructure)"
         )
     )
     recent_news: str = Field(

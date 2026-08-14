@@ -9,9 +9,7 @@ LEAD_ID = "00000000-0000-0000-0000-000000000000"
 def test_logistics_skips_when_not_pending():
     """A lead absent from pending_sends (not approved / already sent) is a no-op."""
     with (
-        patch(
-            "cold_email.workers.logistics.logistics.fetch_send_inputs", return_value=None
-        ),
+        patch("cold_email.workers.logistics.logistics.fetch_send_inputs", return_value=None),
         patch("cold_email.workers.logistics.logistics.send_draft") as mock_send,
         patch("cold_email.workers.logistics.logistics.update_lead_status") as mock_status,
     ):
@@ -61,9 +59,7 @@ def test_logistics_fails_without_gmail_draft_id():
             ),
         ),
         patch("cold_email.workers.logistics.logistics.send_draft") as mock_send,
-        patch(
-            "cold_email.workers.logistics.logistics.handle_terminal_failure"
-        ) as mock_terminal,
+        patch("cold_email.workers.logistics.logistics.handle_terminal_failure") as mock_terminal,
     ):
         result = logistics_task.apply(args=[LEAD_ID]).get(propagate=True)
 

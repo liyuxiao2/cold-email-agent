@@ -1,3 +1,4 @@
+from datetime import UTC
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -171,7 +172,7 @@ async def test_draft_review_queue_returns_newest_draft():
     """After a regenerate, the review queue must show the NEWEST draft, even when
     every draft row shares version=1 (version is vestigial). Selection is by
     created_at, consistent with the pending_sends view used for sending."""
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     def _draft(body, gmail_id, when):
         d = MagicMock()
@@ -183,8 +184,8 @@ async def test_draft_review_queue_returns_newest_draft():
         d.created_at = when
         return d
 
-    old = _draft("OLD freeform body", "gmail-old", datetime(2026, 8, 13, 0, 58, tzinfo=timezone.utc))
-    new = _draft("Hi Kenny, new template", "gmail-new", datetime(2026, 8, 13, 1, 50, tzinfo=timezone.utc))
+    old = _draft("OLD freeform body", "gmail-old", datetime(2026, 8, 13, 0, 58, tzinfo=UTC))
+    new = _draft("Hi Kenny, new template", "gmail-new", datetime(2026, 8, 13, 1, 50, tzinfo=UTC))
 
     lead = MagicMock(spec=Lead)
     lead.id = "00000000-0000-0000-0000-00000000000a"
@@ -196,7 +197,7 @@ async def test_draft_review_queue_returns_newest_draft():
     lead.funding_stage = None
     lead.headcount = None
     lead.status = "drafted"
-    lead.created_at = datetime(2026, 8, 13, 0, 0, tzinfo=timezone.utc)
+    lead.created_at = datetime(2026, 8, 13, 0, 0, tzinfo=UTC)
     lead.drafts = [old, new]  # oldest FIRST — trips max(key=version) tie
     lead.research = []
 

@@ -25,9 +25,7 @@ def markdown_to_html(text: str) -> str:
     for para in re.split(r"\n{2,}", text.strip()):
         lines = [ln.strip() for ln in para.split("\n") if ln.strip()]
         if lines and all(ln.startswith("- ") for ln in lines):
-            items = "".join(
-                f'<li style="margin-bottom:4px;">{ln[2:]}</li>' for ln in lines
-            )
+            items = "".join(f'<li style="margin-bottom:4px;">{ln[2:]}</li>' for ln in lines)
             html_parts.append(f'<ul style="margin:8px 0;padding-left:20px;">{items}</ul>')
         else:
             html_parts.append(f'<p style="margin:0 0 12px 0;">{"<br>".join(lines)}</p>')

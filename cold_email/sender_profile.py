@@ -1,9 +1,9 @@
-"""Static sender identity for candidate-outreach drafting.
+"""Static sender identity and resume loader for candidate-outreach drafting.
 
 The drafting stage fills a fixed template (see prompts/email_template.py); this
-module supplies the deterministic sender fields and the *pool* of achievement
-bullets the LLM tailors from per company. Expand EXPERIENCE_POOL with more
-bullets to give the model richer material to select from.
+module supplies the deterministic sender fields and loads the full resume text
+(from resume.txt) which the LLM uses to dynamically tailor introductions and
+experience bullets. A static fallback experience pool is maintained for safety and tests.
 """
 
 from dataclasses import dataclass, field
@@ -66,4 +66,3 @@ PROFILE = SenderProfile(
         "Cold Email Agent": "https://github.com/liyuxiao2/cold-email-agent",
     },
 )
-

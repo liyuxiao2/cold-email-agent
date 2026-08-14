@@ -21,9 +21,7 @@ def resolve_lead_url(lead_id: str) -> LeadResolution:
 
     if not lead:
         logger.error(f"Lead {lead_id} not found in DB")
-        return LeadResolution(
-            failure={"status": "failed", "error": "Lead not found"}
-        )
+        return LeadResolution(failure={"status": "failed", "error": "Lead not found"})
 
     # Trust the discovery-scraped company_url only if it actually looks like the
     # company's homepage; otherwise (aggregator/news link, or empty) fall back to

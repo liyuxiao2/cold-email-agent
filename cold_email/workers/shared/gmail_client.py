@@ -53,12 +53,7 @@ def create_draft(to: str, subject: str, body: str, html: str | None = None) -> s
     raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
 
     service = _build_service()
-    draft = (
-        service.users()
-        .drafts()
-        .create(userId="me", body={"message": {"raw": raw}})
-        .execute()
-    )
+    draft = service.users().drafts().create(userId="me", body={"message": {"raw": raw}}).execute()
     logger.info(f"Created Gmail draft {draft['id']} to {to}")
     return draft["id"]
 
@@ -70,11 +65,6 @@ def send_draft(draft_id: str) -> str:
     to rebuild the message. The gmail.compose scope already permits sending.
     """
     service = _build_service()
-    sent = (
-        service.users()
-        .drafts()
-        .send(userId="me", body={"id": draft_id})
-        .execute()
-    )
+    sent = service.users().drafts().send(userId="me", body={"id": draft_id}).execute()
     logger.info(f"Sent Gmail draft {draft_id} as message {sent['id']}")
     return sent["id"]

@@ -153,7 +153,6 @@ async def list_leads(
 
     count_stmt = _apply_lead_filters(select(func.count(Lead.id)), status, search)
     total_matching = (await session.execute(count_stmt)).scalar_one()
-
     return {
         "items": [_serialize_lead(lead, include_meta=True) for lead in leads],
         "total": total_matching,

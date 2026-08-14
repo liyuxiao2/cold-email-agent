@@ -3,9 +3,8 @@
 The model does NOT write the whole email — the template (email_template.py) owns
 structure and tone. The model returns only the *contextual* pieces via the
 EmailDraftContext schema: the subject, the two company-specific interest phrases,
-and a tailored selection of the sender's experience bullets. Everything else is
-filled deterministically. Schema flows through the provider-agnostic generate_json
-layer (Gemini response_schema / Groq field-guide).
+a tailored introduction sentence, and a selection of experience bullets extracted
+from the resume. Everything else is filled deterministically.
 """
 
 from pydantic import BaseModel, Field
@@ -69,4 +68,3 @@ def build_email_draft_messages(
         f"Sender's Resume:\n{resume_text}\n\n"
         "Fill the requested fields."
     )
-

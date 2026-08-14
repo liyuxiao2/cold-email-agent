@@ -55,9 +55,15 @@ def test_assemble_produces_subject_body_and_html():
     assert "IBM (https://ibm.com)" in draft["body"]
     # HTML variant has real markup and a clickable link.
     assert "<ul" in draft["body_html"]
-    assert 'GitHub (https://github.com/liyuxiao2)' in draft["body"]
-    assert '<a href="https://wealthsimple.com" style="color:#1a73e8;text-decoration:underline;">Wealthsimple</a>' in draft["body_html"]
-    assert '<a href="https://ibm.com" style="color:#1a73e8;text-decoration:underline;">IBM</a>' in draft["body_html"]
+    assert "GitHub (https://github.com/liyuxiao2)" in draft["body"]
+    assert (
+        '<a href="https://wealthsimple.com" style="color:#1a73e8;text-decoration:underline;">Wealthsimple</a>'
+        in draft["body_html"]
+    )
+    assert (
+        '<a href="https://ibm.com" style="color:#1a73e8;text-decoration:underline;">IBM</a>'
+        in draft["body_html"]
+    )
 
 
 def test_assemble_returns_empty_when_context_incomplete():

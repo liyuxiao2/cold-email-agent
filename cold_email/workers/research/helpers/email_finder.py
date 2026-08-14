@@ -24,9 +24,26 @@ logger = logging.getLogger(__name__)
 # Tokens that signal the LLM returned a non-name (title, hedge, or placeholder)
 # rather than a person. Matched case-insensitively against whole words.
 _NON_NAME_TOKENS = {
-    "not", "founder", "founders", "ceo", "cto", "coo", "cofounder", "co-founder",
-    "the", "team", "board", "director", "directors", "unknown", "none", "na",
-    "n/a", "unclear", "unnamed", "and",
+    "not",
+    "founder",
+    "founders",
+    "ceo",
+    "cto",
+    "coo",
+    "cofounder",
+    "co-founder",
+    "the",
+    "team",
+    "board",
+    "director",
+    "directors",
+    "unknown",
+    "none",
+    "na",
+    "n/a",
+    "unclear",
+    "unnamed",
+    "and",
 }
 _NAME_WORD = re.compile(r"^[A-Za-z][A-Za-z.'-]*$")
 

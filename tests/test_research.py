@@ -113,9 +113,12 @@ def test_call_gemini_uses_models_generate_content():
 
     # Pin the chain to a Gemini model so _provider_for routes to GeminiProvider,
     # and patch the client the provider constructs.
-    with patch("cold_email.workers.shared.llm.settings.model_fallback_chain",
-               ["gemini-3.5-flash-lite"]), \
-         patch("cold_email.workers.shared.llm.genai.Client", return_value=mock_client):
+    with (
+        patch(
+            "cold_email.workers.shared.llm.settings.model_fallback_chain", ["gemini-3.5-flash-lite"]
+        ),
+        patch("cold_email.workers.shared.llm.genai.Client", return_value=mock_client),
+    ):
         raw = call_gemini("scraped text", "Acme Corp")
 
     mock_client.models.generate_content.assert_called_once()

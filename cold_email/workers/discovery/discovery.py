@@ -17,7 +17,9 @@ from cold_email.workers.research import research_task
 
 logger = logging.getLogger(__name__)
 
-pool = redis.ConnectionPool.from_url(settings.celery_broker_url, max_connections=REDIS_MAX_CONNECTIONS)
+pool = redis.ConnectionPool.from_url(
+    settings.celery_broker_url, max_connections=REDIS_MAX_CONNECTIONS
+)
 
 
 def extract_leads(urls: list[str], limit: int = 20) -> list[dict]:

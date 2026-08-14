@@ -25,13 +25,9 @@ def _field_guide(schema: type[BaseModel]) -> str:
 
 
 class LLMProvider(Protocol):
-    def generate(
-        self, *, model: str, system: str, prompt: str, schema: type[BaseModel]
-    ) -> str:
-        ...
+    def generate(self, *, model: str, system: str, prompt: str, schema: type[BaseModel]) -> str: ...
 
-    def should_fall_back(self, exc: Exception) -> bool:
-        ...
+    def should_fall_back(self, exc: Exception) -> bool: ...
 
 
 class GeminiProvider:
@@ -108,9 +104,7 @@ def generate_json(*, system: str, prompt: str, schema: type[BaseModel]) -> str:
     for model in chain:
         provider = _provider_for(model)
         try:
-            return provider.generate(
-                model=model, system=system, prompt=prompt, schema=schema
-            )
+            return provider.generate(model=model, system=system, prompt=prompt, schema=schema)
         except Exception as exc:
             if not provider.should_fall_back(exc):
                 raise

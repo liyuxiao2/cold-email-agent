@@ -23,9 +23,7 @@ def _pending_row(lead_id, founder_email="founder@acme.com"):
 
 def test_drafting_sweep_empty():
     """No pending leads → the sweep is a no-op returning drafted: 0."""
-    with patch(
-        "cold_email.workers.drafting.drafting.fetch_pending_drafts", return_value=[]
-    ):
+    with patch("cold_email.workers.drafting.drafting.fetch_pending_drafts", return_value=[]):
         result = drafting_task.apply(args=[]).get(propagate=True)
     assert result == {"status": "success", "drafted": 0}
 
@@ -73,9 +71,7 @@ def test_drafting_skips_lead_without_email():
             return_value=[_pending_row(LEAD_A, founder_email=None)],
         ),
         patch("cold_email.workers.drafting.drafting.draft_email") as mock_draft,
-        patch(
-            "cold_email.workers.drafting.drafting.handle_terminal_failure"
-        ) as mock_terminal,
+        patch("cold_email.workers.drafting.drafting.handle_terminal_failure") as mock_terminal,
     ):
         result = drafting_task.apply(args=[]).get(propagate=True)
 
@@ -94,9 +90,7 @@ def test_drafting_marks_empty_draft_failed():
         ),
         patch("cold_email.workers.drafting.drafting.draft_email", return_value={}),
         patch("cold_email.workers.drafting.drafting.create_draft") as mock_create,
-        patch(
-            "cold_email.workers.drafting.drafting.handle_terminal_failure"
-        ) as mock_terminal,
+        patch("cold_email.workers.drafting.drafting.handle_terminal_failure") as mock_terminal,
         patch("cold_email.workers.drafting.drafting.time.sleep"),
     ):
         result = drafting_task.apply(args=[]).get(propagate=True)

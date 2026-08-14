@@ -16,9 +16,10 @@ def test_looks_like_person_name():
     assert looks_like_person_name("the five founders") is False
     assert looks_like_person_name("not found") is False
     assert looks_like_person_name("Yaser Sheikh, Russ Salakhutdinov, Chuck Hoover") is False
-    assert looks_like_person_name(
-        "Aziz Gilani is not the founder but is on the Board of Directors."
-    ) is False
+    assert (
+        looks_like_person_name("Aziz Gilani is not the founder but is on the Board of Directors.")
+        is False
+    )
     assert looks_like_person_name("") is False
     assert looks_like_person_name(None) is False
     assert looks_like_person_name("Madonna") is False  # single word, not First Last

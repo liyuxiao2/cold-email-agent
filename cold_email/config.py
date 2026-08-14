@@ -77,12 +77,6 @@ class Settings(BaseSettings):
 
     model_name: str = "gemini-flash-latest"
 
-    # Ordered fallback chain for generate_json. Each name is routed to its
-    # provider by _provider_for() in workers/shared/llm.py, so a chain can mix
-    # providers — Groq first (fast, generous free tier), Gemini as a
-    # cross-provider safety net when every Groq model is rate-limited.
-    # Swapping models — even across providers — is just editing this list.
-    # Env override: MODEL_FALLBACK_CHAIN as a JSON array.
     model_fallback_chain: list[str] = [
         "llama-3.3-70b-versatile",
         "llama-3.1-8b-instant",
@@ -91,5 +85,3 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
-
-
