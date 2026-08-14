@@ -6,14 +6,14 @@ so that research.py only contains Celery orchestration logic.
 
 import logging
 
-from cold_email.database import Lead, Research, SyncSessionLocal, get_sync_session
+from cold_email.database import Lead, Research, get_sync_session
 
 logger = logging.getLogger(__name__)
 
 
 def fetch_lead(lead_id: str) -> Lead | None:
     """Fetch a lead from the database by its ID."""
-    with SyncSessionLocal() as session:
+    with get_sync_session() as session:
         lead = session.get(Lead, lead_id)
         logger.info(f"Lead fetched from DB: {lead}")
     return lead
