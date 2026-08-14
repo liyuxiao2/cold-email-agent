@@ -21,7 +21,7 @@ Hi {{first_name}},
 I know your time is valuable so I'll keep it short. {{intro}}
 
 I'm particularly interested in {{company_interest}}, and am impressed by the \
-technical depth of your engineering team. I'm drawn to {{admiration_detail}} \
+technical depth of your engineering team. I'm {{admiration_detail}} \
 and wanted to see if there might be a fit for me to contribute in any capacity.
 
 **Recent Experience:**
