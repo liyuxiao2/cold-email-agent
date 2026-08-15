@@ -11,6 +11,16 @@ from pydantic import BaseModel, Field
 
 RECIPIENT_TITLE = "Founder"  # startups.gallery leads are founders; no title column upstream.
 
+WHY_COMPANY_EXAMPLES = (
+    "Good Examples:\n"
+    "  * 'Congrats on the recent seed round! Seeing how Nourish leverages AI-native metabolic care to drive "
+    "measurable outcomes in chronic disease management is incredibly exciting, and I wanted to see if there might "
+    "be a fit for me to contribute to the engineering team.'\n"
+    "  * 'I\\'ve been following how Turo handles database scaling, especially on the Go side. Since my background "
+    "is in high-throughput backend infrastructure, I wanted to see if there might be a fit for me to help support "
+    "and scale the platform.'"
+)
+
 EMAIL_DRAFT_SYSTEM = (
     "You fill the contextual slots of a fixed candidate-outreach email a software "
     "engineer sends to a startup founder. You do NOT write the whole email — only "
@@ -22,13 +32,7 @@ EMAIL_DRAFT_SYSTEM = (
     "on recent news/funding, reference a specific project or tech stack, or explain why their mission/problem is "
     "compelling to you, and close the paragraph with a transition to seeing if there might be a fit to contribute "
     "to the team.\n"
-    "  Good Examples:\n"
-    "  * 'Congrats on the recent seed round! Seeing how Nourish leverages AI-native metabolic care to drive "
-    "measurable outcomes in chronic disease management is incredibly exciting, and I wanted to see if there might "
-    "be a fit for me to contribute to the engineering team.'\n"
-    "  * 'I\\'ve been following how Turo handles database scaling, especially on the Go side. Since my background "
-    "is in high-throughput backend infrastructure, I wanted to see if there might be a fit for me to help support "
-    "and scale the platform.'\n"
+    f"  {WHY_COMPANY_EXAMPLES}\n"
     "- `intro`: write a tailored first-person introduction sentence (e.g., 'My name is Liyu, a CS student at McMaster...') "
     "that highlights relevant aspects of your background (from the resume) that align with "
     "the company's domain, tech stack, or challenges. Keep it to exactly one sentence, professional, "
