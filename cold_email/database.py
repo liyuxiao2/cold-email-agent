@@ -55,7 +55,11 @@ class User(Base):
     # bucket, since the user is spending their own limits.
     llm_api_key_enc = Column(LargeBinary)
     llm_provider = Column(String)  # groq | gemini
-    monthly_draft_quota = Column(Integer, nullable=False, default=100)
+    # server_default (not just the ORM-side `default`) so create_all and
+    # migration 008 (`NOT NULL DEFAULT 100`) provision byte-identical DDL —
+    # otherwise a raw SQL INSERT that never goes through the ORM's `default`
+    # would violate NOT NULL on a create_all-provisioned table.
+    monthly_draft_quota = Column(Integer, nullable=False, default=100, server_default=text("100"))
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
