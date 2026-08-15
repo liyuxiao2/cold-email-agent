@@ -55,11 +55,13 @@ The entire production stack runs 24/7 in Google Cloud and Vercel:
 | **Backend REST API** | [https://cold-email-backend-426138953095.us-central1.run.app](https://cold-email-backend-426138953095.us-central1.run.app) | Cloud Run FastAPI backend |
 | **Health Check** | [`/api/health`](https://cold-email-backend-426138953095.us-central1.run.app/api/health) | API & Cloud SQL database connectivity check — PUBLIC, no auth (Cloud Run's health check calls it) |
 | **Pipeline Stats** | [`/api/pipeline/stats`](https://cold-email-backend-426138953095.us-central1.run.app/api/pipeline/stats) | Two dicts: `companies` (by `research_status`, GLOBAL) and `outreach` (by `status`, filtered to the caller) |
-| **Company Pool** | `GET /api/companies` | Read-only global company pool (every user sees the same rows) — the admin-populated set a user selects from |
+| **Company Pool** | `GET /api/companies` | Read-only global company pool, filtered (industry, funding stage, headcount, search, founder-reachable) and with companies the CALLER already targeted excluded — never returns an address, only `contact_count` / `has_founder_contact` |
+| **Company Detail** | `GET /api/companies/{id}` | One company with full research and contact SUMMARIES (`first_name`, `position`, `is_founder`) — still no addresses |
+| **Create Outreach** | `POST /api/outreach` | Queues drafts for the caller's selected `company_ids`; partial success (`created` / `skipped`, see Contact Spreading and Rate Limiting & Quota below), dispatches `drafting_task(user_id)` once for the batch |
 | **Review Queue** | [`/api/outreach/drafts`](https://cold-email-backend-426138953095.us-central1.run.app/api/outreach/drafts) | THIS user's drafted outreach rows pending human review |
 | **List Outreach** | `GET /api/outreach` | THIS user's outreach rows, paginated/filtered/searched |
 | **Trigger Discovery** | `POST /api/pipeline/discovery` | Enqueues a new startup discovery sweep (admin) |
-| **Trigger Drafting** | `POST /api/pipeline/drafting` | Enqueues a batch sweep drafting emails for queued outreach rows (admin) |
+| **Trigger Drafting** | `POST /api/pipeline/drafting` | Manually runs the hourly `drafting_recovery_task` safety net for users with stale `queued` rows (admin) — drafting itself is dispatched per-user by `POST /api/outreach`, not this route |
 | **Requeue Research** | `POST /api/pipeline/research` | Re-dispatches research for companies stuck in `found` (recovers orphaned companies; admin) |
 | **Approve Outreach** | `POST /api/outreach/{id}/approve` | Approves THIS user's draft and dispatches `logistics_task` (Gmail send); 404 if the row isn't the caller's |
 | **Reject Outreach** | `POST /api/outreach/{id}/reject` | Marks THIS user's outreach rejected with optional notes; 404 if the row isn't the caller's |
@@ -75,6 +77,10 @@ The entire production stack runs 24/7 in Google Cloud and Vercel:
 | **Upload Résumé** | `POST /api/profile/resume` | Multipart PDF upload. Validates → stores the bytes → returns a **suggested** profile parsed by the LLM; nothing besides the résumé itself is saved until a follow-up `PUT /api/profile` |
 | **Download Résumé** | `GET /api/profile/resume` | Streams the caller's own stored PDF back; 404 if none stored |
 | **Delete Résumé** | `DELETE /api/profile/resume` | Clears the stored PDF, keeping the rest of the profile intact |
+| **Get Quota** | `GET /api/quota` | The caller's monthly draft quota: `{used, limit, period_end}` (see Rate Limiting & Quota below) |
+| **Get LLM Key** | `GET /api/llm-key` | Whether a BYOK key is configured, its provider, and its last 4 characters — never the key itself |
+| **Set LLM Key** | `PUT /api/llm-key` | Stores a BYOK key after validating it with one live call; 422 if validation fails, so a bad key fails a form instead of 40 drafts one at a time |
+| **Delete LLM Key** | `DELETE /api/llm-key` | Removes the stored BYOK key, reverting the caller to the platform's shared bucket and quota |
 
 **Every other route above now requires a session cookie**; `POST /api/pipeline/*`
 additionally requires `role = 'admin'` (`require_admin`).
@@ -218,20 +224,116 @@ dataclass a worker actually uses from that row.
    - **Fail-fast gate:** `has_eligible_contact` checks whether at least one saved contact is `eligible`. None eligible → the company is **dead-lettered at research** (`fail_company`, `ERR_NO_ELIGIBLE_CONTACTS`, stage `research`) and `research_status = 'failed'`, so it never reaches drafting. Otherwise `research_status = 'researched'`.
    - Recoverable: `POST /api/pipeline/research` re-dispatches research for companies stuck in `found` (discovery only enqueues research for brand-new companies).
 
-3. **Drafting Sweep (`cold_email.workers.drafting.drafting_task`)**:
-   - Batch sweep: queries the `pending_drafts` database view for every `outreach` row currently `status = 'queued'` (joined to its company, contact, and research). Sweeps are single-user until Stack 3 makes drafting parametrized per user.
-   - **Temporary bridge — delete in Stack 3.** Nothing creates `outreach` rows until Stack 3 ships the pool-selection UI (`POST /api/outreach`), so `bridge_queue_admin_outreach()` runs at the top of every sweep and queues an `outreach` row for the admin account over every `researched` company that doesn't already have one — replicating pre-split behaviour (the admin drafts everything researched) so the pipeline doesn't silently stop. **Stack 3 removes this function and its call site** once real user selection exists.
-   - **Loads the sending user's identity ONCE per sweep, not per row.** `load_sender_context` reads the `profiles` row, résumé bytes, and Gmail credentials a single time before the per-row loop — a résumé's bytes cross the DB connection on every read, so doing this per row would pull the same ~400KB file out of Cloud SQL once per queued outreach row in the sweep. Two outcomes are preflight failures for the WHOLE sweep, not any one row, because neither is fixable by trying a different lead: no `profiles` row (or one missing `name`/`intro`) → aborts as `"no_profile"`; Gmail disconnected (`resolve_gmail_credentials` returns `None`) → aborts as `"gmail_disconnected"`. Either way the sweep returns early, **every queued row is left exactly at `status = 'queued'` and no dead-letter row is written** — completing the profile or reconnecting Gmail makes the very next Beat tick pick everything up with no manual DLQ retry. (A *missing résumé* is not one of these: it's not terminal, since the email body still renders from `intro` + `experience_pool` without an attachment.)
-   - No repo-relative `resume.pdf` is read anymore — the attachment (if any) comes back from `resume_store.get_resume_sync` as `(filename, bytes)` alongside the rest of that sweep's `SenderContext`.
-   - **Template-driven, not freeform.** A fixed candidate-outreach template (`prompts/email_template.py`) owns structure/tone; the LLM (via `generate_json` with the `EmailDraftContext` schema) fills only the *contextual slots* — subject, a company-interest phrase, an admiration detail, and the 3 most-relevant experience bullets tailored per company from that sweep's `SenderProfile.experience_pool`. `assemble_email` fills the template (`fill_template` raises on any unfilled `{{token}}`) and renders HTML + a plain-text fallback (`helpers/html_builder.py`). Per-row (not sweep-wide) failures — a missing contact email or empty model output — go through `fail_outreach` (`ERR_NO_CONTACT_EMAIL` / `ERR_EMPTY_DRAFT`), terminal for that one row only, so one bad row never aborts the rest of the sweep. Calls paced under the free-tier limit.
-   - Creates a **multipart** Gmail draft via `create_draft(creds, to, subject, body, html=..., attachment=(filename, bytes))` (plain fallback + rich HTML with bold, a bullet list, clickable GitHub/LinkedIn links, and the résumé PDF attached) using that sweep's per-user `GmailCredentials`, and saves `gmail_draft_id`.
+3. **Drafting (`cold_email.workers.drafting.drafting_task`)**:
+   - **On-demand per user, not a Beat sweep.** Dispatched by `POST /api/outreach` (`drafting_task.delay(str(user.id))`) the moment that user's selected companies are queued. One dispatch drafts every `outreach` row currently `status = 'queued'` for that ONE user (via the `pending_drafts` view, joined to company, contact, and research) — a batch per user, not per company, since the task already sweeps everything that user just queued.
+   - **Per-user isolation is structural, not a convention to remember.** An earlier shape of this task took no arguments and grouped every tenant's queued rows itself in one pass — which meant a single dispatch could draft rows belonging to several users using the FIRST owner's profile, résumé, and Gmail mailbox. `drafting_task(user_id)` cannot reach another user's rows by construction; the cross-tenant grouping now happens one level up, in `drafting_recovery_task`, for the same reason it always existed — one dispatch must never load two users' credentials into one draft.
+   - **`drafting_recovery_task` is the hourly safety net, not the primary path** (Celery Beat, see the schedule below). It finds users with an `outreach` row stuck `queued` for more than `RECOVERY_STALE_MINUTES` (30) — evidence the original dispatch never happened, e.g. a Redis hiccup inside `POST /api/outreach` — and re-dispatches `drafting_task` for each of them.
+   - **Loads the sending user's identity ONCE per dispatch, not per row.** `load_sender_context` reads the `profiles` row, résumé bytes, and Gmail credentials a single time before the per-row loop — a résumé's bytes cross the DB connection on every read, so doing this per row would pull the same ~400KB file out of Cloud SQL once per queued outreach row. Two outcomes are preflight failures for the WHOLE batch, not any one row, because neither is fixable by trying a different row: no `profiles` row (or one missing `name`/`intro`) → aborts as `"no_profile"`; Gmail disconnected (`resolve_gmail_credentials` returns `None`) → aborts as `"gmail_disconnected"`. Either way it returns early, **every queued row is left exactly at `status = 'queued'` and no dead-letter row is written** — completing the profile or reconnecting Gmail lets the next dispatch (a manual regenerate, or the recovery sweep) pick everything up with no manual DLQ retry. (A *missing résumé* is not one of these: it's not terminal, since the email body still renders from `intro` + `experience_pool` without an attachment.)
+   - No repo-relative `resume.pdf` is read anymore — the attachment (if any) comes back from `resume_store.get_resume_sync` as `(filename, bytes)` alongside the rest of that dispatch's `SenderContext`.
+   - **Template-driven, not freeform.** A fixed candidate-outreach template (`prompts/email_template.py`) owns structure/tone; the LLM (via `generate_json` with the `EmailDraftContext` schema) fills only the *contextual slots* — subject, a company-interest phrase, an admiration detail, and the 3 most-relevant experience bullets tailored per company from that user's `SenderProfile.experience_pool`. `assemble_email` fills the template (`fill_template` raises on any unfilled `{{token}}`) and renders HTML + a plain-text fallback (`helpers/html_builder.py`). Per-row (not batch-wide) failures — a missing contact email or empty model output — go through `fail_outreach` (`ERR_NO_CONTACT_EMAIL` / `ERR_EMPTY_DRAFT`), terminal for that one row only, so one bad row never aborts the rest of the batch. See **Rate Limiting & Quota** below for how the LLM call itself is throttled and metered across every user drafting at once.
+   - Creates a **multipart** Gmail draft via `create_draft(creds, to, subject, body, html=..., attachment=(filename, bytes))` (plain fallback + rich HTML with bold, a bullet list, clickable GitHub/LinkedIn links, and the résumé PDF attached) using that user's `GmailCredentials`, and saves `gmail_draft_id`.
    - Advances the outreach row to `status = 'drafted'` (held in review queue).
-   - Scheduled via Celery Beat to sweep every 15 minutes.
 
 4. **Logistics (`cold_email.workers.logistics.logistics_task`)**:
    - Event-driven per outreach row: triggered when a human clicks **Approve** in the frontend (`POST /api/outreach/{id}/approve`).
    - Sends the stored Gmail draft via Gmail API (`send_draft`).
    - Advances the outreach row to `status = 'sent'`.
+
+---
+
+## 🎯 Contact Spreading (`cold_email.contact_selection.select_contact`)
+
+The company pool is fully shared, so without spreading, every user who selects
+the same company lands on the same eligible contact, and that one person
+receives N near-identical emails from N different senders — reads as a spam
+farm, not personalized outreach. `select_contact(session, company_id, cap)`,
+called from `POST /api/outreach`, picks the least-globally-contacted eligible
+contact instead, reading the `available_contacts` view (`use_count` computed
+across **every** user, not just the caller):
+
+```sql
+ORDER BY use_count ASC, confidence DESC, is_founder DESC, contact_id ASC
+LIMIT 1
+```
+
+- **`use_count ASC` dominates the ordering** — spreading is the entire reason
+  this function exists, so it sorts first, ahead of everything else.
+- **`confidence DESC`** — among contacts tied on `use_count`, prefer the one
+  Hunter is more sure is actually deliverable.
+- **`is_founder DESC` sits BELOW `use_count`, deliberately.** Ranking founders
+  first regardless of use would re-concentrate volume on exactly the address
+  spreading exists to protect: the founder would win every tie and get
+  selected first repeatedly, defeating the point of the ordering.
+- **`contact_id ASC`** — a total ordering so two contacts tied on every other
+  column still return deterministically. Without it, Postgres may return
+  either of two equal rows on different calls, which looks like a selection
+  bug in a test re-run when it's really just a missing tiebreaker.
+- `select_contact` returns `None` once every eligible contact at a company
+  has hit `cap` (`settings.contact_cap`, default 3, overridable via
+  `CONTACT_CAP`) — `POST /api/outreach` turns that into a `no_available_contact`
+  skip, and the company drops out of the pool entirely (`companies.py`'s
+  `avail.contact_count > 0` filter).
+
+**The cap is a heuristic, not an invariant.** Reading `use_count` and creating
+the `outreach` row are two separate steps, so two concurrent `POST
+/api/outreach` requests can both read a contact at `use_count = cap - 1`, both
+pass the check, and both insert — landing on `cap + 1`. This is accepted
+rather than fixed: enforcing the cap exactly would mean serializing pool
+selection (e.g. `SELECT ... FOR UPDATE`) across every user hitting that
+endpoint at once, to protect a bound that is itself a judgment call, not a
+correctness requirement. Occasionally routing a fourth user to a
+contact instead of three is a cheaper failure mode than that lock contention.
+
+---
+
+## 🚦 Rate Limiting & Quota
+
+Two independent limits sit between a user selecting companies and an LLM call
+actually happening — one protects the shared provider budget, the other
+protects the platform's cost per user.
+
+**Fleet-wide Redis token bucket (`cold_email.workers.shared.rate_limit`)**
+replaces what used to be a `time.sleep(LLM_MIN_INTERVAL_SECONDS)` between
+calls inside a single drafting sweep.
+
+- **Why a sleep was insufficient.** A `sleep` paces ONE worker process. The
+  real constraint — a provider's free-tier RPM/RPD — is shared by every
+  worker, every user, and every task type calling that model. With exactly
+  one user drafting, "pace this process" and "respect the provider's quota"
+  were indistinguishable, so the sleep happened to work. With N users
+  drafting concurrently — each a separate `drafting_task(user_id)` dispatch,
+  each its own process — sleep **guarantees** 429s: every process politely
+  waits its own fixed interval with no idea any other process exists, so
+  nothing stops several of them from calling the same model in the same
+  second.
+- **`acquire(key, rate, burst, timeout)`** takes one token from a
+  Redis-backed bucket keyed per model (`llm:{model}`) before every
+  `generate_json` call. The check-and-decrement runs as a Lua script so it's
+  ATOMIC — a read-then-write in Python has a race between processes that
+  would defeat the whole point.
+- **Fails OPEN, not closed**, if Redis is unreachable: failing closed would
+  turn a Redis blip into a total drafting outage, whereas failing open only
+  risks the 429s the model fallback chain already tolerates.
+- **BYOK bypasses the bucket entirely** — it exists to protect the
+  platform's shared quota, and a BYOK call isn't spending it.
+
+**Per-user monthly draft quota (`cold_email.quota`)** —
+`users.monthly_draft_quota` (default 100) caps how many `outreach` rows a
+user may **create** per UTC calendar month, not how many they send. The LLM
+call — the actual cost — happens at drafting, so a user who drafts 100 and
+approves 3 has already spent 100 units of the thing being rationed.
+
+- `quota.check(session, user, requested)` **clamps rather than rejects**:
+  `POST /api/outreach` creates as many of the requested companies as the
+  remaining quota allows and reports the rest as `skipped:
+  quota_exceeded` — a user selecting 20 with 12 left gets 12 drafts and a
+  clear note, not a 400 and nothing (see the partial-success semantics in
+  `outreach.py`).
+- Calendar month in UTC, not a rolling 30-day window, so remaining quota
+  doesn't drift unpredictably day to day.
+- **BYOK bypasses the quota too**, for the same reason it bypasses the
+  bucket: it's the user's own provider limits being spent, not the
+  platform's.
 
 ---
 
@@ -293,6 +395,7 @@ Tables:
 - **`drafts`**: Subject line, generated email body, `gmail_draft_id`, version, reviewer notes. FK's to `outreach` (PER-USER).
 - **`dead_letter`**: Terminally-failed tasks — nullable `company_id` **and** `outreach_id` (CHECK: exactly one set), `task_name`, `stage`, `error_msg`, `retry_count` (see DLQ above).
 - **`leads_legacy`**: The pre-split `leads` table, renamed (not dropped) by migration `006`. `companies.id` reuses `leads.id` verbatim, so every FK remap onto the new tables is a pure column rename. Kept as a rollback safety net until this deploy is proven; a follow-up migration drops it.
+- **`users`**: One row per authenticated person. `role` (`user`/`admin`), Fernet-encrypted `gmail_refresh_token_enc`, `gmail_sender_email`. `monthly_draft_quota` (Integer, default 100) — the per-user monthly cap `quota.check`/`quota.usage` enforce (see Rate Limiting & Quota above). Optional BYOK: `llm_api_key_enc` (Fernet ciphertext) and `llm_provider` (`groq`|`gemini`), set together via `PUT /api/llm-key` and resolved per-call by `resolve_llm_credentials`. A configured BYOK key bypasses BOTH the shared Redis token bucket and `monthly_draft_quota` — a BYOK call spends the user's own provider limits, not the platform's.
 - **`profiles`** (migration `007`): Per-user sender identity — `user_id` is the PRIMARY KEY (one profile per user, structural not a unique constraint), `name`, `intro`, `linkedin`, `github`, `website`, `experience_pool` (JSONB list), `company_links` (JSONB dict), `resume_pdf` (BYTEA, `STORAGE EXTERNAL` — see below), `resume_filename`, `resume_text`, `parsed_at`. Replaces the old compiled-in `sender_profile.PROFILE` plus the committed `resume.txt`/`resume.pdf`. All reads/writes of `resume_pdf` go through `cold_email/resume_store.py` — no other module touches those bytes. `SenderProfile.from_row` builds the in-memory dataclass from a `profiles` row.
 - **`pending_drafts` View**: Distinct `outreach` rows in `queued` status, joined to their company, contact, and latest research.
 - **`pending_sends` View**: Distinct `outreach` rows in `approved` status (and due, per `scheduled_send_at`), joined to their contact email and latest draft.
@@ -328,6 +431,11 @@ GMAIL_CLIENT_SECRET=...
 
 # Sender identity (name, intro, links, résumé, experience bullets) is
 # per-user data in the `profiles` table, not code — see Sender Identity above.
+
+# Max users who may ever email a single contact. A SPREADING HEURISTIC, not
+# an invariant — concurrent requests can exceed it by one (see Contact
+# Spreading above); not worth serializing pool selection to enforce exactly.
+CONTACT_CAP=3
 
 # Auth (Google Sign-In + per-user sessions)
 SESSION_SECRET=...                   # HS256 signing key for the session JWT
@@ -393,11 +501,12 @@ quietly:
   un-migrated schema) survive either way.
 - `GET /api/health` only checks DB connectivity, so it still returns 200 —
   Cloud Run's health check passes and cuts traffic over to the new revision.
-- The drafting sweep then raises
-  `TypeError: PendingDraft() got an unexpected keyword argument 'lead_id'`
-  (or the equivalent "relation does not exist" / missing-column error) every
-  15 minutes, and every lead/company sits stranded — nothing is ever drafted
-  or sent, with no user-visible error anywhere in the dashboard.
+- `drafting_task` then raises `TypeError: PendingDraft() got an unexpected
+  keyword argument 'lead_id'` (or the equivalent "relation does not exist" /
+  missing-column error) the moment a user's `POST /api/outreach` dispatches
+  it, and again every hour when `drafting_recovery_task` retries the same
+  stuck rows — every lead/company sits stranded, nothing is ever drafted or
+  sent, with no user-visible error anywhere in the dashboard.
 
 Apply it by hand, before rolling out this stack's image, with
 `ON_ERROR_STOP=1` so a failing statement stops `psql` instead of continuing

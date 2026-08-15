@@ -18,17 +18,39 @@ discovery_task --> Firecrawl Extract (startups.gallery, YC, etc.)
     |
     +---> research_task --> scrape + LLM (Groq/Gemini) + Hunter Domain Search
               |  enriches company info, extracts hook, saves a contact pool;
-              |  research_status='researched'
+              |  research_status='researched' -> joins the shared pool
+
+[User browses the pool, selects companies] --> POST /api/outreach
+    |  select_contact() picks the least-globally-contacted eligible contact
+    |  under a per-contact cap (spreading); outreach.status='queued'
+    |
+    +---> drafting_task(user_id) --> LLM (Groq/Gemini, automatic failover,
+              |                       rate-limited by a fleet-wide token bucket)
+              |  generates email for that user's queued outreach rows;
+              |  outreach.status='drafted'
               |
-              +---> drafting_task --> LLM (Groq/Gemini, automatic failover)
-                        |  generates email for each queued outreach row;
-                        |  outreach.status='drafted'
-                        |
-                  [Human review via dashboard]
-                        |
-                  logistics_task --> Gmail API
-                        outreach.status='sent'
+        [Human review via dashboard]
+              |
+        logistics_task --> Gmail API
+              outreach.status='sent'
 ```
+
+Drafting is on-demand, not a timed sweep — it fires the moment a user selects
+companies. An hourly Beat job (`drafting_recovery_task`) only re-dispatches it
+for users whose original dispatch appears to have been lost.
+
+### User flow
+
+1. **Sign in with Google.** One consent screen grants identity and Gmail send
+   access together.
+2. **Upload a résumé** (optional) during onboarding — it's parsed into a
+   suggested profile you review and save before anything is used to draft.
+3. **Browse the pool** (`/pool`) — the shared, researched companies you
+   haven't already targeted, with filters and a running quota bar.
+4. **Select companies and submit.** Each selected company is routed to a
+   least-contacted eligible contact and queued; drafting starts immediately.
+5. **Review drafts** in the dashboard's review queue.
+6. **Approve** to send via Gmail, or reject / regenerate.
 
 ## Prerequisites
 
@@ -93,9 +115,9 @@ to edit — every user sets up their own by signing in:
    parsed into a *suggested* profile; nothing is saved yet.
 3. **Review the extracted profile** — name, intro, links, and experience
    bullets — and edit anything the extraction got wrong.
-4. **Save.** That's the first `PUT /api/profile`; from then on the drafting
-   sweep uses this profile, this résumé, and this Gmail connection to draft
-   and send on that user's behalf.
+4. **Save.** That's the first `PUT /api/profile`; from then on, drafting uses
+   this profile, this résumé, and this Gmail connection to draft and send on
+   that user's behalf.
 
 ### 3. Run everything
 

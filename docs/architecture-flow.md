@@ -31,10 +31,15 @@ graph TD
     Res -->|scrape + LLM| DB
     Res -->|"Hunter domain-search"| Contacts["company_contacts<br/>(the pool)"]
     Contacts -->|"no eligible contact"| DLQ[(dead_letter)]
-    Contacts -->|"research_status=researched"| Pool["Global company pool"]
+    Contacts -->|"research_status=researched"| Pool["Global company pool<br/>(researched, contacts available)"]
 
-    Pool -->|"user selects"| Outreach["outreach<br/>(user_id, company_id, contact_id)<br/>status=queued"]
-    Outreach --> Draft["drafting_task"]
+    Pool -->|"user selects"| Post["POST /api/outreach"]
+    Post --> Sel["select_contact()<br/>least-used, under cap"]
+    Sel -->|"outreach status=queued"| Queued[("outreach")]
+    Sel -->|"all contacts at cap"| Skipped["skipped: no_available_contact"]
+
+    Queued --> Draft["drafting_task(user_id)"]
+    Bucket[("Redis token bucket<br/>per model")] --> Draft
     Draft -->|"LLM + template + résumé"| Gmail["Gmail draft"]
     Draft -->|status=drafted| Review{{"Human review<br/>(always required)"}}
     Review -->|approve| Log["logistics_task"]
@@ -42,11 +47,19 @@ graph TD
     Log -->|"send_draft"| Sent["status=sent"]
 ```
 
-`drafting_task` also depends on three per-user inputs it loads once per sweep
-(`load_sender_context`, `cold_email/workers/drafting/drafting.py`) — a
-missing profile or a disconnected Gmail account aborts the whole sweep before
-any row is touched (leaving rows `queued`, no dead-letter row) rather than
-failing row-by-row:
+`POST /api/outreach` is PARTIAL SUCCESS, not all-or-nothing: each requested
+company independently ends up `created` or `skipped` (`no_available_contact`,
+`already_targeted`, `not_researched`, or `quota_exceeded` — see
+`cold_email/quota.py`). One dispatch of `drafting_task(user_id)` then drafts
+every row that user just queued; an hourly `drafting_recovery_task` Beat job
+re-dispatches it for anyone whose original dispatch appears to have been
+lost, rather than running the sweep on a timer as the primary path.
+
+`drafting_task` also depends on three per-user inputs it loads once per
+dispatch (`load_sender_context`, `cold_email/workers/drafting/drafting.py`) —
+a missing profile or a disconnected Gmail account aborts the whole batch
+before any row is touched (leaving rows `queued`, no dead-letter row) rather
+than failing row-by-row:
 
 ```mermaid
 graph LR
@@ -55,14 +68,6 @@ graph LR
     Creds[("users.gmail_refresh_token_enc<br/>(Fernet)")] --> Draft
     Draft --> Gmail["Gmail draft in the USER's mailbox"]
 ```
-
-> **Temporary bridge.** Nothing creates `outreach` rows via `POST
-> /api/outreach` yet — Stack 3 adds the pool-selection UI. Until then,
-> `bridge_queue_admin_outreach()` (called at the top of every `drafting_task`
-> sweep) queues an `outreach` row for the admin account over every
-> `researched` company, so the pipeline keeps behaving the way it did before
-> the split. **This bridge is deleted in Stack 3** once real user selection
-> exists.
 
 ## 2. Status lifecycle (state machine)
 
@@ -89,7 +94,7 @@ stateDiagram-v2
 
 ## Notes on the real system (not obvious from prose)
 
-- **Push vs. pull boundary.** Discovery→Research is a _push_ (`research_task.delay` per company). Research→Drafting is a _pull_: research only sets `research_status=researched`; the 15-min Beat sweep reads the `pending_drafts` view. Same for Approve→Send via `pending_sends`.
+- **Push vs. pull boundary.** Discovery→Research is a _push_ (`research_task.delay` per company). Research→Pool is a _pull_: research only sets `research_status=researched`; a company only leaves the pool once a user's `POST /api/outreach` reads it. Selection→Drafting is a _push_ again (`drafting_task.delay(user_id)`, on-demand, right after the row is queued), with an hourly `drafting_recovery_task` pull over the `pending_drafts` view as a safety net for a lost dispatch. Approve→Send is a pull via `pending_sends`.
 - **Scheduling is Celery Beat in-container**, not Cloud Scheduler (that API isn't enabled on the project).
 - **DB views are self-healing work queues** — a worker crash mid-sweep is retried on the next tick because the view still lists the unprocessed outreach row.
 - **`POST /api/pipeline/research` is a recovery trigger** — it requeues companies stuck in `found` and re-dispatches `research_task` for each. Fills the gap left by discovery's insert-only dedupe, which never retries existing companies. Terminally `failed` companies are recovered separately via the dead-letter queue.
