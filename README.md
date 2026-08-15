@@ -31,13 +31,38 @@ discovery_task --> Firecrawl Extract (startups.gallery, YC, etc.)
               |
         [Human review via dashboard]
               |
-        logistics_task --> Gmail API
-              outreach.status='sent'
+        approve (± schedule / cadence) --> outreach.status='approved'
+              |
+        send_due_task (Beat, every 5 min) --> claims due rows, status='sending'
+              |
+        logistics_task --> Gmail API --> outreach.status='sent'
 ```
 
 Drafting is on-demand, not a timed sweep — it fires the moment a user selects
 companies. An hourly Beat job (`drafting_recovery_task`) only re-dispatches it
 for users whose original dispatch appears to have been lost.
+
+Approving a draft doesn't send it directly — it sets `outreach.status =
+'approved'` and (optionally) a `scheduled_send_at`. A Beat job
+(`send_due_task`) sweeps every 5 minutes for approved rows that are due and
+sends them.
+
+### Send cadence
+
+Approving 40 emails leaves them all `approved` at once; without a cadence,
+`send_due_task`'s very next tick would fire all 40 out of one Gmail account
+in the same few minutes — the clearest spam signal a new sender can produce,
+and the fastest way to get that account flagged. A **daily send cadence**
+(`GET`/`PUT`/`DELETE /api/cadence`) spreads them out instead: set a max per
+day, which days of the week, a send window, and a timezone, and approving a
+batch (`POST /api/outreach/bulk-approve`) spaces them evenly across your free
+slots rather than stacking them on one instant. Approving without a cadence
+configured still sends normally, on the next scan.
+
+You can also schedule an individual email for an exact time (`Approve &
+schedule…` in the dashboard, or `scheduled_send_at` on the approve API), or
+pull an already-approved one back into the review queue
+(`POST /api/outreach/{id}/unschedule`) without spending another draft.
 
 ### User flow
 
@@ -50,7 +75,8 @@ for users whose original dispatch appears to have been lost.
 4. **Select companies and submit.** Each selected company is routed to a
    least-contacted eligible contact and queued; drafting starts immediately.
 5. **Review drafts** in the dashboard's review queue.
-6. **Approve** to send via Gmail, or reject / regenerate.
+6. **Approve** — immediately, on your configured send cadence, or at a time
+   you pick — to send via Gmail on the next scan, or reject / regenerate.
 
 ## Prerequisites
 
@@ -143,7 +169,8 @@ If you prefer separate terminals for cleaner logs, run `make worker`, `make beat
 cold_email/
   config.py            # pydantic-settings, loads .env
   database.py          # SQLAlchemy models (Company, CompanyContact, Outreach, ...) + sync/async engines
-  celery_app.py        # Celery app + Beat schedule
+  cadence.py           # daily send-cadence slot arithmetic (next_slot, validate_cadence)
+  celery_app.py        # Celery app + Beat schedule (incl. send_due_task, reap_stuck_sends)
   workers/
     discovery/
       discovery.py      # Firecrawl Extract -> find companies
@@ -152,14 +179,15 @@ cold_email/
     drafting/
       drafting.py        # Celery orchestration; helpers/ has LLM generation, DB writes
     logistics/
-      logistics.py       # Gmail API -> send emails
+      logistics.py       # send_due_task (claim + dispatch) / logistics_task (Gmail send) / reap_stuck_sends
     shared/
       llm.py             # provider-agnostic generate_json (Groq + Gemini, automatic failover)
       errors.py           # fail_company / fail_outreach -> dead_letter
   api/
     main.py            # FastAPI app
     routes/
-      outreach.py       # per-user outreach routes (review, approve/reject/regenerate)
+      outreach.py       # per-user outreach routes (review, approve/schedule/bulk-approve/unschedule/reject/regenerate)
+      cadence.py         # per-user send cadence CRUD
       companies.py      # read-only global company pool
       pipeline.py        # discovery/drafting/research triggers + stats
       dlq.py              # dead-letter queue list/retry

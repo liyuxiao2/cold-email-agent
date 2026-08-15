@@ -54,7 +54,7 @@ The entire production stack runs 24/7 in Google Cloud and Vercel:
 | **Frontend Dashboard** | [https://cold-email-puce-nine.vercel.app](https://cold-email-puce-nine.vercel.app) | Live Next.js review deck, approvals & company explorer |
 | **Backend REST API** | [https://cold-email-backend-426138953095.us-central1.run.app](https://cold-email-backend-426138953095.us-central1.run.app) | Cloud Run FastAPI backend |
 | **Health Check** | [`/api/health`](https://cold-email-backend-426138953095.us-central1.run.app/api/health) | API & Cloud SQL database connectivity check — PUBLIC, no auth (Cloud Run's health check calls it) |
-| **Pipeline Stats** | [`/api/pipeline/stats`](https://cold-email-backend-426138953095.us-central1.run.app/api/pipeline/stats) | Two dicts: `companies` (by `research_status`, GLOBAL) and `outreach` (by `status`, filtered to the caller) |
+| **Pipeline Stats** | [`/api/pipeline/stats`](https://cold-email-backend-426138953095.us-central1.run.app/api/pipeline/stats) | Two dicts: `companies` (by `research_status`, GLOBAL) and `outreach` (by `status` — `queued`, `drafted`, `approved`, `sending`, `sent`, `rejected`, `failed` — filtered to the caller) |
 | **Company Pool** | `GET /api/companies` | Read-only global company pool, filtered (industry, funding stage, headcount, search, founder-reachable) and with companies the CALLER already targeted excluded — never returns an address, only `contact_count` / `has_founder_contact` |
 | **Company Detail** | `GET /api/companies/{id}` | One company with full research and contact SUMMARIES (`first_name`, `position`, `is_founder`) — still no addresses |
 | **Create Outreach** | `POST /api/outreach` | Queues drafts for the caller's selected `company_ids`; partial success (`created` / `skipped`, see Contact Spreading and Rate Limiting & Quota below), dispatches `drafting_task(user_id)` once for the batch |
@@ -63,7 +63,11 @@ The entire production stack runs 24/7 in Google Cloud and Vercel:
 | **Trigger Discovery** | `POST /api/pipeline/discovery` | Enqueues a new startup discovery sweep (admin) |
 | **Trigger Drafting** | `POST /api/pipeline/drafting` | Manually runs the hourly `drafting_recovery_task` safety net for users with stale `queued` rows (admin) — drafting itself is dispatched per-user by `POST /api/outreach`, not this route |
 | **Requeue Research** | `POST /api/pipeline/research` | Re-dispatches research for companies stuck in `found` (recovers orphaned companies; admin) |
-| **Approve Outreach** | `POST /api/outreach/{id}/approve` | Approves THIS user's draft and dispatches `logistics_task` (Gmail send); 404 if the row isn't the caller's |
+| **Approve Outreach** | `POST /api/outreach/{id}/approve` | Approves THIS user's draft and sets its schedule (see Scheduling & Cadence below) — an explicit `scheduled_send_at`, `send_now: true`, or (empty body) the caller's next cadence slot if one is configured, else NULL. Does **not** dispatch anything itself; `send_due_task`'s Beat scan claims and sends it. 404 if the row isn't the caller's; 409 if the cadence has no free slot in the horizon |
+| **Bulk Approve** | `POST /api/outreach/bulk-approve` | Approves several of THIS user's drafted rows in one call, spreading them across cadence slots in a SINGLE walk (not one independent slot lookup per row) |
+| **Unschedule** | `POST /api/outreach/{id}/unschedule` | Returns THIS user's approved row to `drafted` (not `queued` — the draft already exists) and clears `scheduled_send_at`; 404 if the row isn't the caller's |
+| **Scheduled Queue** | `GET /api/outreach/scheduled` | THIS user's own upcoming approved-and-scheduled sends, soonest first |
+| **Get/Set/Clear Cadence** | `GET` / `PUT` / `DELETE /api/cadence` | THIS user's daily send cadence (JSONB — see Scheduling & Cadence below); `PUT` 422s on an invalid `max_per_day`, `days`, window, or timezone |
 | **Reject Outreach** | `POST /api/outreach/{id}/reject` | Marks THIS user's outreach rejected with optional notes; 404 if the row isn't the caller's |
 | **Regenerate Draft** | `POST /api/outreach/{id}/regenerate` | Resets THIS user's outreach to `queued` and triggers re-drafting; 404 if the row isn't the caller's |
 | **List DLQ** | `GET /api/dlq` | Lists dead-lettered (terminally-failed) tasks awaiting retry |
@@ -234,10 +238,102 @@ dataclass a worker actually uses from that row.
    - Creates a **multipart** Gmail draft via `create_draft(creds, to, subject, body, html=..., attachment=(filename, bytes))` (plain fallback + rich HTML with bold, a bullet list, clickable GitHub/LinkedIn links, and the résumé PDF attached) using that user's `GmailCredentials`, and saves `gmail_draft_id`.
    - Advances the outreach row to `status = 'drafted'` (held in review queue).
 
-4. **Logistics (`cold_email.workers.logistics.logistics_task`)**:
-   - Event-driven per outreach row: triggered when a human clicks **Approve** in the frontend (`POST /api/outreach/{id}/approve`).
-   - Sends the stored Gmail draft via Gmail API (`send_draft`).
-   - Advances the outreach row to `status = 'sent'`.
+4. **Logistics (`cold_email.workers.logistics`) — scanner-driven, not approve-driven.**
+   Clicking **Approve** only sets state: it moves the row to `status =
+   'approved'` and records `scheduled_send_at` (see **Scheduling & Cadence**
+   below). It no longer dispatches anything itself. Three tasks do the actual
+   work:
+   - **`send_due_task`** (Celery Beat, every 5 minutes) is the only thing that
+     turns an `approved` row into a sent email. It claims every row that is
+     now due — `pending_sends` already encodes "due" as `status = 'approved'
+     AND (scheduled_send_at IS NULL OR scheduled_send_at <= now())` — by
+     flipping each to `status = 'sending'` in the SAME `UPDATE ... WHERE
+     status = 'approved' ... RETURNING id` that selects it (`claim_due_sends`),
+     then dispatches `logistics_task` only for the ids that `UPDATE` actually
+     returned. This claim-before-dispatch is load-bearing: Celery guarantees
+     at-least-once **task** delivery, so a scanner that only removed a row
+     from its candidate set on success would eventually dispatch the same
+     send twice, and a cold email delivered twice to a founder cannot be
+     undone. See **Scheduling & Cadence** for why this matters more than it
+     looks.
+   - **`logistics_task(outreach_id)`** sends ONE claimed draft. It re-checks
+     the row is still `'sending'` before calling `send_draft` — the SECOND
+     guard, catching a duplicate Celery delivery of the same dispatch rather
+     than a second scan — then sends via Gmail API and advances the row to
+     `status = 'sent'`. A row already past `'sending'` (e.g. a redelivered
+     task) is a no-op, not an error.
+   - **`reap_stuck_sends`** (Celery Beat, hourly) dead-letters any row still
+     `'sending'` after `STUCK_SENDING_MINUTES` (30) — a worker crashed
+     mid-send and never reached `'sent'` or `'failed'`, so its outcome is
+     unknown. Unlike the `drafting` reclaim path (which retries automatically
+     — see the DLQ section below), this is **surfaced, never auto-retried**:
+     no email has left the building when a `drafting` claim strands, but a
+     stranded `sending` claim might already have delivered, and retrying a
+     send whose outcome is unknown is exactly how a double-send happens. A
+     human verifies the mailbox, then retries via `POST /api/dlq/retry`.
+   - `celery_app.timezone` (`America/Toronto`) governs Beat's own cron
+     interpretation ONLY — which wall-clock instant "every 5 minutes" or
+     "hour 8" means for scheduling the *tasks themselves*. The scanner's own
+     due/stuck comparisons use `datetime.now(timezone.utc)` explicitly, never
+     that setting; conflating the two is how a scheduler ends up five hours
+     off in production while looking correct on a laptop.
+
+---
+
+## ⏱️ Scheduling & Cadence (`cold_email.cadence`)
+
+Two independent knobs share one nullable column and one worker: a per-email
+override (`scheduled_send_at`) and a per-user daily rhythm (`send_cadence`).
+
+- **`outreach.scheduled_send_at`** (`DateTime(timezone=True)`, nullable): the
+  UTC instant a row becomes due. **NULL means "send on the next scanner tick"
+  (≤5 minutes)** — the default for both an unscheduled approve and a cleared
+  cadence. A *past* timestamp is accepted, not rejected: rejecting a timestamp
+  that went stale while the user read the draft would be hostile, and "send
+  this immediately" is the reasonable reading. A timestamp beyond
+  `cadence.HORIZON_DAYS` (90) is 422 — `POST /api/outreach/{id}/approve`'s
+  boundary check, not the worker's.
+- **`users.send_cadence`** (JSONB, nullable — NULL means send immediately on
+  approve): `{"max_per_day": int (1-50), "days": [0-6, ...], "window_start":
+  "HH:MM", "window_end": "HH:MM", "timezone": "<IANA name>"}`. `days` follows
+  Python's `date.weekday()` convention — `0` = Monday. `cadence.next_slot`
+  walks forward day-by-day in the cadence's own timezone, skipping days not
+  in `days` and days already at `max_per_day`, and returns the first evenly-
+  spaced slot at or after `now` — evenly spaced, not all at `window_start`,
+  because N emails at the same instant is exactly the burst cadence exists to
+  prevent. Exhausting the 90-day horizon raises `CadenceUnsatisfiable`, which
+  `POST /api/outreach/{id}/approve` turns into a 409.
+- **Approve's four cases**, resolved by `outreach.py`'s `_resolve_send_time`:
+  an explicit `scheduled_send_at` wins outright; `send_now: true` forces
+  NULL, overriding any cadence; an empty body with a cadence configured
+  computes the next free slot; an empty body with no cadence falls through to
+  NULL. `POST /api/outreach/bulk-approve` resolves every requested row's slot
+  in ONE walk, feeding each computed slot back in as "taken" — approving rows
+  independently would hand every one of them the same "next free slot",
+  making cadence useless at exactly the batch size that makes it necessary.
+- **UTC storage, IANA zone name — not a fixed offset.** Every timestamp is
+  stored and compared in UTC; the cadence carries a zone NAME
+  (`America/Toronto`, not `-05:00`) used only to answer "which local day is
+  this, and is it inside the window." A fixed offset is wrong for half the
+  year the moment DST flips, and storing a LOCAL timestamp directly would
+  make DST a correctness bug outright: `America/Toronto` has a day with no
+  02:30 and a day with two, so a stored local timestamp is either
+  non-existent or ambiguous twice a year. UTC plus a zone name is unambiguous
+  always. `PUT /api/cadence` validates the zone with `zoneinfo.ZoneInfo` and
+  422s on anything it can't resolve — an unresolvable name accepted here
+  would make `next_slot` raise inside a Celery worker instead, turning a form
+  typo into a background failure the user can never connect back to the form
+  they submitted.
+- **Claim-before-dispatch is the reason any of this is safe to run
+  unattended.** Celery guarantees at-least-once *task* delivery. Run a
+  scanner over a set that only shrinks on success, and at-least-once task
+  delivery becomes at-least-once **email** delivery — and a cold email a
+  founder receives twice cannot be un-sent. `send_due_task` closes that gap
+  by claiming each row (`approved` → `sending`) in the same `UPDATE ...
+  RETURNING id` that selects it, so two overlapping scans (or a redelivered
+  dispatch) cannot both act on one row. See the rewritten **Logistics**
+  section above for the two guards this produces, and `docs/architecture-flow.md`
+  for the state diagram.
 
 ---
 
@@ -370,8 +466,8 @@ failures are outreach-level, and collapsing both into one FK would lose that
 distinction. A permanently-failed row is visible on the company or outreach row
 *and* independently retryable.
 
-- **Producers:** research (`fail_company`, no eligible contact — `ERR_NO_ELIGIBLE_CONTACTS`), drafting (`fail_outreach`, no contact email or empty model output), logistics (`fail_outreach`, no Gmail draft — `ERR_NO_GMAIL_DRAFT`).
-- **Retry:** `POST /api/dlq/retry` resets each row to its stage's input state — `research` → `companies.research_status = 'found'`, `drafting` → `outreach.status = 'queued'`, `logistics` → `outreach.status = 'approved'` — re-dispatches the worker, and deletes the row. A task that fails again is re-written to the DLQ by the same choke point, so the queue self-cleans.
+- **Producers:** research (`fail_company`, no eligible contact — `ERR_NO_ELIGIBLE_CONTACTS`), drafting (`fail_outreach`, no contact email or empty model output), logistics (`fail_outreach`, no Gmail draft — `ERR_NO_GMAIL_DRAFT` — or a row stuck `'sending'` past `STUCK_SENDING_MINUTES`, reaped by `reap_stuck_sends` with `ERR_SEND_STATUS_UNKNOWN`). The stuck-`sending` case is deliberately never auto-retried by anything upstream of a human clicking retry — see **Scheduling & Cadence** and the rewritten **Logistics** section above for why, in contrast to `drafting`'s stale-claim reclaim, which DOES retry automatically.
+- **Retry:** `POST /api/dlq/retry` resets each row to its stage's input state — `research` → `companies.research_status = 'found'`, `drafting` → `outreach.status = 'queued'`, `logistics` → `outreach.status = 'approved'` — and deletes the row. `research` and `drafting` also re-dispatch their worker directly; `logistics` deliberately does **not** — the row is `'approved'` again, and `send_due_task`'s next Beat tick claims and sends it. Dispatching `logistics_task` here too would act on a row still `'approved'` (not yet claimed `'sending'`), bypassing the claim-before-dispatch guard and reintroducing the double-send risk it exists to prevent. A task that fails again is re-written to the DLQ by the same choke point, so the queue self-cleans.
 - **Inspect:** `GET /api/dlq` lists rows with the joined company name (via EITHER FK — `company_id` directly for a research failure, or `outreach_id → outreach.company_id` for drafting/logistics), stage, error, and retry count.
 - On first boot after migration `004`, `start.sh` provisions the table via idempotent `Base.metadata.create_all`.
 
@@ -384,21 +480,21 @@ Two-level status vocabulary — GLOBAL (`companies.research_status`) and PER-USE
 `failed`:
 
 - `companies.research_status`: `found` → `researched`, or `found` → `failed` (no eligible contacts).
-- `outreach.status`: `queued` → `drafted` → `approved` → `sent`, or `drafted` → `rejected`, or `queued`/`drafted` → `failed`.
+- `outreach.status`: `queued` → `drafted` → `approved` → `sending` → `sent`, or `drafted` → `rejected`, or `queued`/`drafted` → `failed`, or `sending` → `failed` (Gmail error, or reaped after 30 min stuck). `sending` is a transient CLAIM (see the rewritten **Logistics** section and **Scheduling & Cadence** above), not a stage a human ever chooses.
 
 Tables:
 
 - **`companies`**: The GLOBAL pool — discovered once, researched once, reused by every user. Company info (`company_name`, `company_url`, `linkedin_url`, `founder_name`, `funding_stage`, `headcount`, `industry`), `research_status`, `error_msg`. No per-user state.
 - **`company_contacts`**: One emailable person at a company, from Hunter Domain Search — a pool, not a single `founder_email`, so a shared company pool doesn't mean every user emails the same person. `email`, `first_name`, `last_name`, `position`, `seniority`, `department`, `confidence` (Hunter 0-100), `is_founder`, `eligible`. Ineligible contacts are stored too (see the Research bullet above).
-- **`outreach`**: The PER-USER half — one user's attempt to reach one company through one contact. `user_id`, `company_id`, `contact_id` (nullable, `SET NULL` on contact delete), `status`, `scheduled_send_at` (NULL = send immediately; wired for Stack 4), `error_msg`. `UNIQUE(user_id, company_id)` — a user targets a company at most once; two different users targeting the same company is expected.
+- **`outreach`**: The PER-USER half — one user's attempt to reach one company through one contact. `user_id`, `company_id`, `contact_id` (nullable, `SET NULL` on contact delete), `status`, `scheduled_send_at` (`DateTime(timezone=True)`, NULL = send on the next `send_due_task` tick — see **Scheduling & Cadence** above), `error_msg`. `UNIQUE(user_id, company_id)` — a user targets a company at most once; two different users targeting the same company is expected. Two partial indexes support the scanner: `outreach_due_idx` on `scheduled_send_at WHERE status = 'approved'`, and `outreach_sending_idx` on `updated_at WHERE status = 'sending'` (for `reap_stuck_sends`) — partial because `'sent'` rows dominate the table over time and neither index needs to cover them.
 - **`research`**: Tech stack JSONB, recent news, value proposition hook, raw scraped content. FK's to `companies` (GLOBAL, not per-outreach).
 - **`drafts`**: Subject line, generated email body, `gmail_draft_id`, version, reviewer notes. FK's to `outreach` (PER-USER).
 - **`dead_letter`**: Terminally-failed tasks — nullable `company_id` **and** `outreach_id` (CHECK: exactly one set), `task_name`, `stage`, `error_msg`, `retry_count` (see DLQ above).
 - **`leads_legacy`**: The pre-split `leads` table, renamed (not dropped) by migration `006`. `companies.id` reuses `leads.id` verbatim, so every FK remap onto the new tables is a pure column rename. Kept as a rollback safety net until this deploy is proven; a follow-up migration drops it.
-- **`users`**: One row per authenticated person. `role` (`user`/`admin`), Fernet-encrypted `gmail_refresh_token_enc`, `gmail_sender_email`. `monthly_draft_quota` (Integer, default 100) — the per-user monthly cap `quota.check`/`quota.usage` enforce (see Rate Limiting & Quota above). Optional BYOK: `llm_api_key_enc` (Fernet ciphertext) and `llm_provider` (`groq`|`gemini`), set together via `PUT /api/llm-key` and resolved per-call by `resolve_llm_credentials`. A configured BYOK key bypasses BOTH the shared Redis token bucket and `monthly_draft_quota` — a BYOK call spends the user's own provider limits, not the platform's.
+- **`users`**: One row per authenticated person. `role` (`user`/`admin`), Fernet-encrypted `gmail_refresh_token_enc`, `gmail_sender_email`. `monthly_draft_quota` (Integer, default 100) — the per-user monthly cap `quota.check`/`quota.usage` enforce (see Rate Limiting & Quota above). `send_cadence` (JSONB, nullable, NULL = send immediately on approve) — the per-user daily send rhythm; see **Scheduling & Cadence** above for its shape and validation. Optional BYOK: `llm_api_key_enc` (Fernet ciphertext) and `llm_provider` (`groq`|`gemini`), set together via `PUT /api/llm-key` and resolved per-call by `resolve_llm_credentials`. A configured BYOK key bypasses BOTH the shared Redis token bucket and `monthly_draft_quota` — a BYOK call spends the user's own provider limits, not the platform's.
 - **`profiles`** (migration `007`): Per-user sender identity — `user_id` is the PRIMARY KEY (one profile per user, structural not a unique constraint), `name`, `intro`, `linkedin`, `github`, `website`, `experience_pool` (JSONB list), `company_links` (JSONB dict), `resume_pdf` (BYTEA, `STORAGE EXTERNAL` — see below), `resume_filename`, `resume_text`, `parsed_at`. Replaces the old compiled-in `sender_profile.PROFILE` plus the committed `resume.txt`/`resume.pdf`. All reads/writes of `resume_pdf` go through `cold_email/resume_store.py` — no other module touches those bytes. `SenderProfile.from_row` builds the in-memory dataclass from a `profiles` row.
 - **`pending_drafts` View**: Distinct `outreach` rows in `queued` status, joined to their company, contact, and latest research.
-- **`pending_sends` View**: Distinct `outreach` rows in `approved` status (and due, per `scheduled_send_at`), joined to their contact email and latest draft.
+- **`pending_sends` View**: Distinct `outreach` rows in `approved` status AND due (`scheduled_send_at IS NULL OR scheduled_send_at <= now()`), joined to their contact email and latest draft. `send_due_task` claims exactly the rows this view lists.
 - **`available_contacts` View**: Every eligible `company_contacts` row with its `use_count` (how many `outreach` rows already reference it) — exposes the count rather than filtering on a cap, since baking a cap `K` into the view would make changing that business rule require a migration. Stack 3's per-contact cap selection reads this.
 
 ---

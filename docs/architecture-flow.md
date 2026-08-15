@@ -42,9 +42,14 @@ graph TD
     Bucket[("Redis token bucket<br/>per model")] --> Draft
     Draft -->|"LLM + template + résumé"| Gmail["Gmail draft"]
     Draft -->|status=drafted| Review{{"Human review<br/>(always required)"}}
-    Review -->|approve| Log["logistics_task"]
+    Review -->|"approve (± schedule)"| Approved["status=approved<br/>scheduled_send_at set"]
     Review -->|reject| Rejected["status=rejected"]
+    Scan["send_due_task<br/>(Beat, every 5 min)"] -->|"CLAIM: UPDATE ... WHERE<br/>status='approved' RETURNING id"| Approved
+    Approved -->|"claimed"| Sending["status=sending"]
+    Sending --> Log["logistics_task"]
     Log -->|"send_draft"| Sent["status=sent"]
+    Log -->|"Gmail error"| Failed["status=failed"]
+    Sending -->|"stuck >30min"| Reap["reap_stuck_sends<br/>(dead-lettered, never auto-retried)"]
 ```
 
 `POST /api/outreach` is PARTIAL SUCCESS, not all-or-nothing: each requested
@@ -84,17 +89,33 @@ stateDiagram-v2
         [*] --> queued: user selects a company
         queued --> drafted
         queued --> failed: empty model output
-        drafted --> approved: human approves
+        drafted --> approved: human approves (± schedule)
         drafted --> rejected
-        approved --> sent
+        approved --> sending: send_due_task CLAIMS the row
+        sending --> sent
+        sending --> failed: Gmail error, or reaped after 30 min
     }
 ```
+
+`approved → sending` is a conditional `UPDATE outreach SET status = 'sending'
+... WHERE status = 'approved' ... RETURNING id`, not a plain write — the
+`WHERE status = 'approved'` is what makes it a CLAIM: two overlapping
+`send_due_task` scans (or Celery redelivering the same dispatch) issue that
+same conditional `UPDATE`, and only the first one's `WHERE` clause still
+matches, so the second affects zero rows and dispatches nothing. Without it,
+Celery's at-least-once *task* delivery guarantee becomes at-least-once
+**email** delivery, and a cold email a founder receives twice cannot be
+un-sent. See `cold_email/cadence.py` and the **Scheduling & Cadence** section
+of `CLAUDE.md` for how `scheduled_send_at` (the thing that makes a row
+"approved" become "due") gets set in the first place.
 
 ---
 
 ## Notes on the real system (not obvious from prose)
 
-- **Push vs. pull boundary.** Discovery→Research is a _push_ (`research_task.delay` per company). Research→Pool is a _pull_: research only sets `research_status=researched`; a company only leaves the pool once a user's `POST /api/outreach` reads it. Selection→Drafting is a _push_ again (`drafting_task.delay(user_id)`, on-demand, right after the row is queued), with an hourly `drafting_recovery_task` pull directly over the `outreach` table (not the `pending_drafts` view, which has no notion of "how long queued") as a safety net for a lost dispatch. Approve→Send is a pull via `pending_sends`.
+- **Push vs. pull boundary.** Discovery→Research is a _push_ (`research_task.delay` per company). Research→Pool is a _pull_: research only sets `research_status=researched`; a company only leaves the pool once a user's `POST /api/outreach` reads it. Selection→Drafting is a _push_ again (`drafting_task.delay(user_id)`, on-demand, right after the row is queued), with an hourly `drafting_recovery_task` pull directly over the `outreach` table (not the `pending_drafts` view, which has no notion of "how long queued") as a safety net for a lost dispatch. Approve→Send is a pull via `pending_sends`, on a 5-minute Beat schedule (`send_due_task`) rather than event-driven off the approve click itself — this is what lets scheduling and cadence exist at all: approve only ever sets `scheduled_send_at`, and whether that instant is "now" or three days out, the same scan is what eventually notices it's due.
+- **Scheduling reuses the approve/send boundary, not a new one.** `outreach.scheduled_send_at` (NULL = due immediately) and `users.send_cadence` (a per-user daily rhythm — see `cold_email/cadence.py` and `CLAUDE.md`'s **Scheduling & Cadence** section) both just set where a row lands on the `approved` side of that pull. `POST /api/outreach/{id}/approve` computes the instant at approve time; `send_due_task` doesn't know or care whether a row got there via an explicit timestamp, a cadence slot, or neither.
+- **The stuck-`sending` reaper never auto-retries — the stale-`drafting` reclaim does, and that asymmetry is deliberate, not an oversight.** A row stranded mid-`drafting` (a hard worker crash between the claim and finishing) has no Gmail draft yet, so reclaiming it back to `queued` for another attempt costs nothing but LLM quota. A row stranded mid-`sending` may already have called `send_draft` — its outcome is unknown, and retrying blind is exactly how a duplicate send happens. So `reap_stuck_sends` dead-letters it for a human to check the mailbox first, instead of silently requeuing.
 - **Scheduling is Celery Beat in-container**, not Cloud Scheduler (that API isn't enabled on the project).
 - **DB views are self-healing work queues** — a worker crash mid-sweep is retried on the next tick because the view still lists the unprocessed outreach row.
 - **`POST /api/pipeline/research` is a recovery trigger** — it requeues companies stuck in `found` and re-dispatches `research_task` for each. Fills the gap left by discovery's insert-only dedupe, which never retries existing companies. Terminally `failed` companies are recovered separately via the dead-letter queue.
