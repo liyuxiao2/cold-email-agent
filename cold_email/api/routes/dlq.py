@@ -1,7 +1,7 @@
 import logging
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -44,6 +44,13 @@ async def list_dead_letter(
     drafting/logistics failure. The two are joined with separate aliases and
     coalesced, since exactly one of the two FKs is ever set (see the
     dead_letter_one_level CHECK).
+
+    Tenancy: a company-anchored row (research failure) is a fact true for
+    everyone — nobody can email that company — so every caller sees it. An
+    outreach-anchored row (drafting/logistics failure) is one user's problem,
+    so it is only returned when the joined Outreach.user_id matches the
+    caller. Without this, any signed-in user could read another user's
+    outreach_id, company name, and error_msg via this endpoint.
     """
     outreach_company = aliased(Company)
     stmt = (
@@ -51,6 +58,7 @@ async def list_dead_letter(
         .outerjoin(Company, DeadLetter.company_id == Company.id)
         .outerjoin(Outreach, DeadLetter.outreach_id == Outreach.id)
         .outerjoin(outreach_company, Outreach.company_id == outreach_company.id)
+        .where(or_(DeadLetter.outreach_id.is_(None), Outreach.user_id == user.id))
         .order_by(DeadLetter.created_at.desc())
     )
     rows = (await session.execute(stmt)).all()
@@ -103,6 +111,14 @@ async def retry_dead_letter(
             continue
 
         if stage_val == "research":
+            # Research rows are company-anchored. A NULL company_id here would
+            # mean str(None) == "None", session.get(Company, None) returning
+            # None without raising, and the row getting silently deleted with
+            # nothing actually re-dispatched — so guard it explicitly instead
+            # of trusting the FK is always populated.
+            if dl.company_id is None:
+                logger.warning(f"DLQ row {dl.id} (stage=research) has no company_id; skipping")
+                continue
             company_id = str(dl.company_id)
             company = await session.get(Company, dl.company_id)
             if company is not None:
@@ -110,22 +126,30 @@ async def retry_dead_letter(
                 company.error_msg = None
             await session.delete(dl)
             research_task.delay(company_id)
-        elif stage_val == "drafting":
+        elif stage_val in ("drafting", "logistics"):
+            # Migration 006 deliberately anchors a drafting/logistics
+            # dead-letter row to company_id (not outreach_id) when it has no
+            # matching outreach row. Without this guard, str(None) == "None"
+            # and session.get(Outreach, None) returns None without raising, so
+            # the row would be deleted and e.g. logistics_task.delay("None")
+            # dispatched for an outreach row that never existed. Skip and
+            # leave the row in place instead.
+            if dl.outreach_id is None:
+                logger.warning(
+                    f"DLQ row {dl.id} (stage={stage_val}) has no outreach_id "
+                    "(company-anchored only); skipping instead of deleting"
+                )
+                continue
             outreach_id = str(dl.outreach_id)
             outreach = await session.get(Outreach, dl.outreach_id)
             if outreach is not None:
                 outreach.status = reset_status
                 outreach.error_msg = None
             await session.delete(dl)
-            drafting_task.delay()
-        else:  # logistics
-            outreach_id = str(dl.outreach_id)
-            outreach = await session.get(Outreach, dl.outreach_id)
-            if outreach is not None:
-                outreach.status = reset_status
-                outreach.error_msg = None
-            await session.delete(dl)
-            logistics_task.delay(outreach_id)
+            if stage_val == "drafting":
+                drafting_task.delay()
+            else:
+                logistics_task.delay(outreach_id)
 
         retried += 1
 
