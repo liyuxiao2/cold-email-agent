@@ -1,4 +1,3 @@
-import pathlib
 from unittest.mock import patch
 
 import pytest
@@ -9,37 +8,6 @@ from cold_email.workers.shared.views import PendingDraft
 
 OUTREACH_A = "00000000-0000-0000-0000-00000000000a"
 OUTREACH_B = "00000000-0000-0000-0000-00000000000b"
-
-VIEWS_SQL_PATH = pathlib.Path(__file__).resolve().parent.parent / "migrations" / "views.sql"
-_VIEW_NAMES = ("pending_drafts", "pending_sends", "available_contacts")
-
-
-def _apply_views():
-    """Create pending_drafts/pending_sends/available_contacts in the test DB.
-
-    async_session's create_all doesn't create database VIEWS (see
-    tests/test_views.py) — tests that exercise the real pending_drafts view via
-    an unmocked fetch_pending_drafts() need them applied first.
-    """
-    import sqlalchemy
-
-    from tests.conftest import TEST_DB_URL
-
-    engine = sqlalchemy.create_engine(TEST_DB_URL.replace("+asyncpg", "+psycopg2"))
-    with engine.connect() as conn:
-        conn.exec_driver_sql(VIEWS_SQL_PATH.read_text())
-        conn.commit()
-    return engine
-
-
-def _drop_views(engine):
-    """Drop the views before async_session's teardown drops the underlying
-    tables — Postgres refuses DROP TABLE while a view still depends on it."""
-    with engine.connect() as conn:
-        for view in _VIEW_NAMES:
-            conn.exec_driver_sql(f"DROP VIEW IF EXISTS {view} CASCADE")
-        conn.commit()
-    engine.dispose()
 
 
 def _pending_row(outreach_id, contact_email="contact@acme.com"):
@@ -280,7 +248,7 @@ async def test_bridge_picks_the_highest_confidence_contact(
 
 @pytest.mark.asyncio
 async def test_empty_model_output_fails_only_that_outreach_row(
-    async_session, admin_user_id, monkeypatch, sync_session_for
+    async_session, admin_user_id, monkeypatch, sync_session_for, pending_views
 ):
     """One bad row must not abort the sweep."""
     from cold_email.database import (
@@ -333,24 +301,20 @@ async def test_empty_model_output_fails_only_that_outreach_row(
     )
     await async_session.commit()
 
-    views_engine = _apply_views()
-    try:
-        monkeypatch.setattr(
-            "cold_email.workers.drafting.drafting.draft_email",
-            lambda row: (
-                {} if row.contact_email == "bad@globex.com" else {"subject": "Hi", "body": "Body"}
-            ),
-        )
-        monkeypatch.setattr("cold_email.workers.drafting.drafting.time.sleep", lambda *_: None)
-        monkeypatch.setattr(
-            "cold_email.workers.drafting.drafting.create_draft", lambda **kwargs: "gmail-1"
-        )
+    monkeypatch.setattr(
+        "cold_email.workers.drafting.drafting.draft_email",
+        lambda row: (
+            {} if row.contact_email == "bad@globex.com" else {"subject": "Hi", "body": "Body"}
+        ),
+    )
+    monkeypatch.setattr("cold_email.workers.drafting.drafting.time.sleep", lambda *_: None)
+    monkeypatch.setattr(
+        "cold_email.workers.drafting.drafting.create_draft", lambda **kwargs: "gmail-1"
+    )
 
-        from cold_email.workers.drafting.drafting import drafting_task
+    from cold_email.workers.drafting.drafting import drafting_task
 
-        result = drafting_task()
-    finally:
-        _drop_views(views_engine)
+    result = drafting_task()
 
     assert result["drafted"] == 1
 
