@@ -139,6 +139,12 @@ def drafting_task(self) -> dict:
             continue
 
         try:
+            # NOTE: draft_email now requires a `profile: SenderProfile` argument
+            # (built from a per-user `profiles` row via SenderProfile.from_row).
+            # This call site is intentionally NOT updated here — a later task in
+            # this stack loads the row's owning user's profile and threads it
+            # through. Until then this raises for every row and each falls into
+            # the `except` below as a transient failure (retried next sweep).
             draft = draft_email(row)
             time.sleep(LLM_MIN_INTERVAL_SECONDS)
 

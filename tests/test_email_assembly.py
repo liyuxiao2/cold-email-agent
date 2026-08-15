@@ -188,7 +188,7 @@ def test_generate_email_addresses_the_llm_prompt_by_full_contact_name(monkeypatc
         recent_news="news",
         hook="hook",
     )
-    generate_email(row)
+    generate_email(row, PROFILE)
     assert "Bo Lin" in str(captured["prompt"])
 
 
@@ -222,7 +222,7 @@ def test_generate_email_falls_back_to_first_name_only_without_a_last_name(monkey
         recent_news="news",
         hook="hook",
     )
-    generate_email(row)
+    generate_email(row, PROFILE)
     assert "Bo" in str(captured["prompt"])
     assert "Bo Lin" not in str(captured["prompt"])
 
