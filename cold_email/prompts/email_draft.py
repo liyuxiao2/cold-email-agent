@@ -13,12 +13,15 @@ RECIPIENT_TITLE = "Founder"  # startups.gallery leads are founders; no title col
 
 WHY_COMPANY_EXAMPLES = (
     "Good Examples:\n"
+    "  * 'I\\'ve been following your development of a universal API that simplifies access to critical GPS, safety, "
+    "and dash cam data from 100+ telematics integrations for commercial trucking. I\\'m really drawn to the high-ownership "
+    "culture you\\'ve built, and wanted to see if there might be a fit for me to contribute to the team.'\n"
+    "  * 'I\\'ve been using Apollo for a while now and love what you guys are doing for cold outreach. Personally, "
+    "Apollo was the reason I found my first internship (it\\'s how I sourced 80% of my hiring manager contacts), "
+    "and I\\'d love the chance to contribute to your mission and learn from the team.'\n"
     "  * 'Congrats on the recent seed round! Seeing how Nourish leverages AI-native metabolic care to drive "
     "measurable outcomes in chronic disease management is incredibly exciting, and I wanted to see if there might "
-    "be a fit for me to contribute to the engineering team.'\n"
-    "  * 'I\\'ve been following how Turo handles database scaling, especially on the Go side. Since my background "
-    "is in high-throughput backend infrastructure, I wanted to see if there might be a fit for me to help support "
-    "and scale the platform.'"
+    "be a fit for me to contribute to the engineering team.'"
 )
 
 EMAIL_DRAFT_SYSTEM = (
