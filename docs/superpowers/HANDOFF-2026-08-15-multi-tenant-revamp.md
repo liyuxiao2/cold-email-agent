@@ -25,17 +25,30 @@ Billing was explicitly deferred. Nothing in the design blocks Stripe later.
 
 ## 2. Current state
 
-### Open PRs — a stack, each based on the previous one
+### Open PRs — one deep linear stack, each PR based on the previous
 
-| PR | Branch | Base | State |
-|---|---|---|---|
-| [#35](https://github.com/liyuxiao2/cold-email-agent/pull/35) | `docs/multi-tenant-revamp-specs` | `main` | Specs + plans only, no code |
-| [#36](https://github.com/liyuxiao2/cold-email-agent/pull/36) | `feat/tenancy-auth` | #35 | Stack 1a — auth & roles |
-| [#37](https://github.com/liyuxiao2/cold-email-agent/pull/37) | `feat/tenancy-data-model` | #36 | Stack 1b — data model split |
-| [#38](https://github.com/liyuxiao2/cold-email-agent/pull/38) | `feat/sender-identity` | #37 | Stack 2 — per-user identity |
+| PRs | Branches | Contents |
+|---|---|---|
+| [#35](https://github.com/liyuxiao2/cold-email-agent/pull/35) | `docs/multi-tenant-revamp-specs` | Specs + plans only, no code |
+| **#39–#58** | `mt/01-…` → `mt/20-…` | Stack 1a — auth & roles |
+| **#59–#80** | `mt/21-…` → `mt/42-…` | Stack 1b — data model split |
+| **#81–#96** | `mt/43-…` → `mt/58-…` | Stack 2 — per-user sender identity |
+
+**58 PRs, at most 7 files each.** Read them in order starting at #39; each PR body names its
+stack position and its base branch. Branch names sort in stack order.
+
+⚠️ **Intermediate PRs are not individually green.** A rename cascades across several PRs (e.g.
+deleting the `Lead` ORM model breaks ~30 callers until the following PRs land), so the **stack
+tip (#96 / `mt/58-docs-handoff`) is the green bar** — 314 tests pass there. This was a deliberate
+choice: forcing every PR green would either merge them back together or require throwaway shims.
+
+An earlier attempt shipped this as three subsystem-sized PRs (42 / 63 / 52 files); those were
+closed as unreviewable and superseded by this stack. Same commits, same final tree — verified
+byte-identical via `git rev-parse <tip>^{tree}`.
 
 **Not started:** Stack 3 (`feat/pool-and-drafting`) and Stack 4 (`feat/scheduling`). Both are
-fully specced and planned — see §5.
+fully specced and planned — see §5. **Build them as deep stacks of ≤7-file PRs from the start**,
+using each plan's task boundaries as PR boundaries.
 
 Test count grew 52 → 136 → 256 → 314. `ruff check .`, `ruff format --check .`, and
 `cd frontend && npm run build` all pass on `feat/sender-identity`.
