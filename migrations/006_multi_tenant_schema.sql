@@ -63,13 +63,35 @@ BEGIN
         RAISE EXCEPTION
             'Column drafts.lead_id is missing, so this schema is already migrated (or was built from the post-1b models). Refusing to run 006 again.';
     END IF;
+
+    -- Symmetric with the research.lead_id / drafts.lead_id checks above: the
+    -- presence check just above only proves a table named "dead_letter"
+    -- exists, not that it has the pre-migration shape. A dead_letter table
+    -- built by create_all from the NEW (post-1b) ORM model already has
+    -- company_id/outreach_id and no lead_id at all — it would sail past the
+    -- presence check, then die deep in the backfill on a raw
+    -- "column dead_letter.lead_id does not exist" when
+    -- `UPDATE dead_letter SET company_id = lead_id ...` runs.
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'dead_letter' AND column_name = 'lead_id'
+    ) THEN
+        RAISE EXCEPTION
+            'Column dead_letter.lead_id is missing, so this schema is already migrated (or was built from the post-1b models). Refusing to run 006 again.';
+    END IF;
 END $$;
 
 -- Drop the old views up front, before the columns they read disappear.
 -- Postgres refuses `ALTER TABLE drafts DROP COLUMN lead_id` while pending_sends
 -- still selects it, so these cannot wait until the new views are defined below.
+-- available_contacts is dropped here too even though nothing it reads changes
+-- shape: it makes re-running 006 after a manual view remediation (e.g. an
+-- operator applying views.sql's DROP-then-CREATE by hand) idempotent instead
+-- of aborting on "relation \"available_contacts\" already exists" — the one
+-- of these three views that otherwise has no DROP anywhere in this file.
 DROP VIEW IF EXISTS pending_drafts;
 DROP VIEW IF EXISTS pending_sends;
+DROP VIEW IF EXISTS available_contacts;
 
 -- ---------------------------------------------------------------- companies
 CREATE TABLE IF NOT EXISTS companies (
@@ -142,6 +164,16 @@ INSERT INTO companies (
     id, company_name, company_url, linkedin_url, founder_name,
     funding_stage, headcount, research_status, error_msg, created_at, updated_at
 )
+-- error_msg is carried onto companies ONLY for a research-level failure
+-- (status='failed' AND founder_email IS NULL — the same condition mapped to
+-- research_status='failed' above). Every other status's error_msg is either a
+-- drafting/send failure message or, since the old reject handler wrote
+-- reviewer notes into this same column (POST /api/leads/{id}/reject set
+-- lead.error_msg = payload.notes), an arbitrary per-user note like "founder
+-- was rude on the call". Carrying that onto the global companies row would
+-- turn a private reviewer note into a fact shown to every future signup via
+-- GET /api/companies. The per-user copy lands correctly on outreach.error_msg
+-- in the backfill below, so nothing is lost — it just isn't duplicated here.
 SELECT
     id, company_name, company_url, linkedin_url, founder_name,
     funding_stage, headcount,
@@ -152,7 +184,11 @@ SELECT
         WHEN status = 'failed' AND founder_email IS NOT NULL THEN 'researched'
         ELSE 'found'
     END,
-    error_msg, created_at, updated_at
+    CASE
+        WHEN status = 'failed' AND founder_email IS NULL THEN error_msg
+        ELSE NULL
+    END,
+    created_at, updated_at
 FROM leads;
 
 -- 2. company_contacts <- the single founder_email per lead.
@@ -219,19 +255,34 @@ END $$;
 -- 4. outreach <- leads that reached drafting or beyond, owned by the admin.
 --    'failed' WITH an email is a drafting/send failure (per-user);
 --    'failed' WITHOUT one is a research failure (global) and gets no row.
+--
+--    Also included: any lead with at least one row in `drafts`, regardless of
+--    its own status. The old POST /api/leads/{id}/regenerate set
+--    status='researched' but LEFT existing draft rows in place, so a
+--    'researched' lead today can still have drafts. 'researched' is not a
+--    valid outreach.status, so the CASE below maps any lead reaching this
+--    INSERT via a non-outreach status to 'drafted' — the draft genuinely
+--    exists and belongs in the review queue, not silently dropped or aborted
+--    on. A 'researched' lead that got as far as drafting already has an
+--    eligible contact seeded by step 2 above (drafting requires an email), so
+--    contact_id resolves via the same LEFT JOIN as every other row here.
 INSERT INTO outreach (user_id, company_id, contact_id, status, error_msg, created_at, updated_at)
 SELECT
     (SELECT id FROM users WHERE role = 'admin' ORDER BY created_at LIMIT 1),
     l.id,
     ct.id,
-    l.status,
+    CASE
+        WHEN l.status IN ('drafted', 'approved', 'sent', 'rejected', 'failed') THEN l.status
+        ELSE 'drafted'
+    END,
     l.error_msg,
     l.created_at,
     l.updated_at
 FROM leads l
 LEFT JOIN company_contacts ct ON ct.company_id = l.id
 WHERE l.status IN ('drafted', 'approved', 'sent', 'rejected')
-   OR (l.status = 'failed' AND l.founder_email IS NOT NULL);
+   OR (l.status = 'failed' AND l.founder_email IS NOT NULL)
+   OR EXISTS (SELECT 1 FROM drafts d WHERE d.lead_id = l.id);
 
 -- 5. drafts: lead_id -> outreach_id via the shared company id.
 ALTER TABLE drafts ADD COLUMN IF NOT EXISTS outreach_id UUID REFERENCES outreach(id) ON DELETE CASCADE;
@@ -241,10 +292,19 @@ FROM outreach o
 WHERE o.company_id = d.lead_id;
 
 -- Deleting an unmatched draft would destroy a generated email body forever;
--- leads_legacy preserves the lead but not the draft text. Expected count is
--- zero (a draft only exists for a lead that reached 'drafted', and every such
--- lead gets an outreach row above), so this costs nothing normally and stops
--- the deploy for a human to look at when the data disagrees.
+-- leads_legacy preserves the lead but not the draft text. This guard is now a
+-- genuine backstop, not a formality: earlier, the outreach backfill's
+-- `OR EXISTS (SELECT 1 FROM drafts ...)` clause already pulls in every lead
+-- that owns a draft row, however the lead's own `status` ended up, so by the
+-- time we get here every drafts row should already have a matching outreach
+-- row. (An earlier version of this migration assumed that was true by
+-- construction because it only backfilled outreach for
+-- drafted/approved/sent/rejected/failed-with-email leads — but
+-- POST /api/leads/{id}/regenerate reset status to 'researched' while leaving
+-- old draft rows in place, so that assumption was false against real
+-- production data, and this guard fired for real.) It stays as the backstop:
+-- if some future change to either backfill re-introduces a gap, stop the
+-- deploy for a human to look at rather than silently deleting draft bodies.
 DO $$
 DECLARE
     orphaned INT;
@@ -300,7 +360,7 @@ END $$;
 -- migration-only provisioning path still needs its own copy. CREATE OR
 -- REPLACE VIEW in views.sql makes re-declaring these harmless, so do NOT
 -- delete either copy — that breaks whichever provisioning path relied on it.
-CREATE VIEW pending_drafts AS
+CREATE OR REPLACE VIEW pending_drafts AS
 SELECT DISTINCT ON (o.id)
     o.id            AS outreach_id,
     o.user_id,
@@ -311,6 +371,7 @@ SELECT DISTINCT ON (o.id)
     c.founder_name,
     ct.email        AS contact_email,
     ct.first_name   AS contact_first_name,
+    ct.last_name    AS contact_last_name,
     ct.position     AS contact_position,
     r.raw_content,
     r.tech_stack,
@@ -326,7 +387,7 @@ ORDER BY o.id, r.created_at DESC;
 -- The scheduled_send_at clause is written now even though nothing sets that
 -- column until Stack 4. NULL therefore means "send immediately" from day one,
 -- and Stack 4 needs no view migration.
-CREATE VIEW pending_sends AS
+CREATE OR REPLACE VIEW pending_sends AS
 SELECT DISTINCT ON (o.id)
     o.id          AS outreach_id,
     o.user_id,
@@ -343,7 +404,7 @@ ORDER BY o.id, d.created_at DESC;
 
 -- Exposes use_count rather than filtering on the cap: baking K into a view
 -- would make changing a business rule require a migration.
-CREATE VIEW available_contacts AS
+CREATE OR REPLACE VIEW available_contacts AS
 SELECT
     ct.id         AS contact_id,
     ct.company_id,
