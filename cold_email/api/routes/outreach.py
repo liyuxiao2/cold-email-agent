@@ -258,8 +258,12 @@ async def create_outreach(
 
     created, skipped = [], []
 
-    for index, company_id in enumerate(payload.company_ids):
-        if index >= allowed:
+    for company_id in payload.company_ids:
+        # Gated on rows actually CREATED so far, not request position: a
+        # company skipped for a non-quota reason (already targeted, exhausted,
+        # not researched) must not burn a quota unit or mislabel a later,
+        # otherwise-fine company as "quota_exceeded" while quota sits unspent.
+        if len(created) >= allowed:
             skipped.append({"company_id": company_id, "reason": "quota_exceeded"})
             continue
 

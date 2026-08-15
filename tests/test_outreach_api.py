@@ -90,6 +90,90 @@ async def test_over_quota_creates_the_allowed_subset(
 
 
 @pytest.mark.asyncio
+async def test_quota_is_gated_on_rows_created_not_request_position(
+    user_client, async_session, pending_views, set_quota
+):
+    """The degenerate case the spec's own partial-success example hinges on:
+    companies skipped for a NON-quota reason inside the first `allowed` slots
+    must not burn a quota unit or mislabel a later, otherwise-fine company as
+    "quota_exceeded" while quota sits unspent.
+
+    3 already-targeted companies + 2 fresh eligible ones, quota allowed=2,
+    already-targeted ones submitted first: gating on request position would
+    let the 2 already-targeted companies consume both "allowed" slots, so
+    both fresh companies (and the 3rd already-targeted one) would be
+    wrongly reported quota_exceeded with 0 actually created. Gating on
+    len(created) must instead create exactly 2 (the fresh ones) and report
+    all 3 already-targeted companies with their real reason.
+    """
+    from sqlalchemy import select
+
+    from cold_email.database import (
+        RESEARCH_RESEARCHED,
+        Company,
+        CompanyContact,
+        Outreach,
+        User,
+    )
+
+    user = (
+        await async_session.execute(select(User).where(User.email == "user@example.com"))
+    ).scalar_one()
+
+    already_targeted = []
+    for i in range(3):
+        company = Company(company_name=f"AlreadyCo{i}", research_status=RESEARCH_RESEARCHED)
+        async_session.add(company)
+        await async_session.commit()
+        contact = CompanyContact(
+            company_id=company.id,
+            email=f"founder{i}@already.co",
+            first_name="Fay",
+            is_founder=True,
+            eligible=True,
+            confidence=90,
+        )
+        async_session.add(contact)
+        async_session.add(Outreach(user_id=user.id, company_id=company.id, contact_id=None))
+        await async_session.commit()
+        already_targeted.append(str(company.id))
+
+    fresh = []
+    for i in range(2):
+        company = Company(company_name=f"FreshCo{i}", research_status=RESEARCH_RESEARCHED)
+        async_session.add(company)
+        await async_session.commit()
+        contact = CompanyContact(
+            company_id=company.id,
+            email=f"founder{i}@fresh.co",
+            first_name="Fay",
+            is_founder=True,
+            eligible=True,
+            confidence=90,
+        )
+        async_session.add(contact)
+        await async_session.commit()
+        fresh.append(str(company.id))
+
+    # Quota usage counts EVERY outreach row created this period, including the
+    # 3 already-targeted ones seeded above — so the limit must clear that
+    # count before the 2 fresh companies have any room: allowed = limit - 3.
+    await set_quota(5)
+
+    body = (
+        await user_client.post("/api/outreach", json={"company_ids": already_targeted + fresh})
+    ).json()
+
+    assert len(body["created"]) == 2
+    assert {c["company_id"] for c in body["created"]} == set(fresh)
+
+    assert len(body["skipped"]) == 3
+    for skip in body["skipped"]:
+        assert skip["reason"] == "already_targeted"
+        assert skip["company_id"] in already_targeted
+
+
+@pytest.mark.asyncio
 async def test_one_drafting_task_is_dispatched_per_batch(user_client, pool_fixture, monkeypatch):
     """The task sweeps all of the user's queued rows, so per-company dispatch
     would be redundant work."""
