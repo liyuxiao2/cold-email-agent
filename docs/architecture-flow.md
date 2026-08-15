@@ -94,7 +94,7 @@ stateDiagram-v2
 
 ## Notes on the real system (not obvious from prose)
 
-- **Push vs. pull boundary.** Discovery→Research is a _push_ (`research_task.delay` per company). Research→Pool is a _pull_: research only sets `research_status=researched`; a company only leaves the pool once a user's `POST /api/outreach` reads it. Selection→Drafting is a _push_ again (`drafting_task.delay(user_id)`, on-demand, right after the row is queued), with an hourly `drafting_recovery_task` pull over the `pending_drafts` view as a safety net for a lost dispatch. Approve→Send is a pull via `pending_sends`.
+- **Push vs. pull boundary.** Discovery→Research is a _push_ (`research_task.delay` per company). Research→Pool is a _pull_: research only sets `research_status=researched`; a company only leaves the pool once a user's `POST /api/outreach` reads it. Selection→Drafting is a _push_ again (`drafting_task.delay(user_id)`, on-demand, right after the row is queued), with an hourly `drafting_recovery_task` pull directly over the `outreach` table (not the `pending_drafts` view, which has no notion of "how long queued") as a safety net for a lost dispatch. Approve→Send is a pull via `pending_sends`.
 - **Scheduling is Celery Beat in-container**, not Cloud Scheduler (that API isn't enabled on the project).
 - **DB views are self-healing work queues** — a worker crash mid-sweep is retried on the next tick because the view still lists the unprocessed outreach row.
 - **`POST /api/pipeline/research` is a recovery trigger** — it requeues companies stuck in `found` and re-dispatches `research_task` for each. Fills the gap left by discovery's insert-only dedupe, which never retries existing companies. Terminally `failed` companies are recovered separately via the dead-letter queue.

@@ -315,3 +315,39 @@ async def test_dlq_hides_another_users_drafting_failure(
     assert body["count"] == len(body["items"])
     for item in body["items"]:
         assert item["error_msg"] != "other user's secret failure"
+
+
+@pytest.mark.asyncio
+async def test_dlq_retry_drafting_stage_resets_and_redispatches(
+    async_session, admin_client, own_outreach
+):
+    """End-to-end coverage for POST /api/dlq/retry?stage=drafting: dlq.py is
+    the only caller of drafting_task.delay(user_id) outside outreach.py, and
+    it was already wrong once (it used to dispatch with the outreach id
+    instead of the row's owning user_id, since drafting_task became
+    per-user)."""
+    own_outreach.status = "failed"
+    own_outreach.error_msg = "Model returned an empty draft"
+    dead_letter = DeadLetter(
+        outreach_id=own_outreach.id,
+        task_name="cold_email.workers.drafting.drafting_task",
+        stage="drafting",
+        error_msg="Model returned an empty draft",
+    )
+    async_session.add(dead_letter)
+    await async_session.commit()
+
+    with patch("cold_email.workers.drafting.drafting.drafting_task.delay") as mock_delay:
+        response = await admin_client.post("/api/dlq/retry", params={"stage": "drafting"})
+
+    assert response.status_code == 200
+    assert response.json() == {"success": True, "retried": 1}
+
+    mock_delay.assert_called_once_with(str(own_outreach.user_id))
+
+    await async_session.refresh(own_outreach)
+    assert own_outreach.status == "queued"
+    assert own_outreach.error_msg is None
+
+    remaining = (await async_session.execute(select(DeadLetter))).scalars().all()
+    assert remaining == []

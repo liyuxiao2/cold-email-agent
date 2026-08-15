@@ -38,7 +38,7 @@ from cold_email.auth.gmail_creds import resolve_gmail_credentials
 from cold_email.database import OUTREACH_DRAFTED, Profile, User, get_sync_session
 from cold_email.resume_store import get_resume_sync
 from cold_email.sender_profile import SenderProfile
-from cold_email.workers.drafting.constants import DRAFTING, ERR_EMPTY_DRAFT, ERR_NO_CONTACT_EMAIL
+from cold_email.workers.drafting.constants import DRAFTING, ERR_EMPTY_DRAFT
 from cold_email.workers.drafting.helpers.db_helpers import commit_draft, fetch_pending_drafts
 from cold_email.workers.drafting.helpers.generation import draft_email
 from cold_email.workers.shared.constants import DEFAULT_MAX_RETRIES, DEFAULT_RETRY_DELAY
@@ -123,9 +123,10 @@ def drafting_task(self, user_id: str) -> dict:
 
     Once past preflight, two failure classes are handled differently per row
     so one bad row never aborts the rest of the batch:
-      * Terminal (no contact email, empty model output) → fail_outreach marks
-        the row 'failed'. It leaves 'queued', drops out of pending_drafts,
-        and is not retried automatically.
+      * Terminal (empty model output) → fail_outreach marks the row 'failed'.
+        It drops out of pending_drafts and is not retried automatically.
+        (contact_email is never missing here: pending_drafts INNER JOINs
+        company_contacts on a NOT NULL email.)
       * Transient (LLM/Gmail network hiccup) → handle_transient_failure logs
         and leaves the row at 'queued'. The recovery sweep retries it later.
 
@@ -156,15 +157,6 @@ def drafting_task(self, user_id: str) -> dict:
     drafted = 0
     for row in pending:
         outreach_id = row.outreach_id
-
-        if not row.contact_email:
-            fail_outreach(
-                outreach_id,
-                ERR_NO_CONTACT_EMAIL,
-                stage=DRAFTING,
-                task_name="cold_email.workers.drafting.drafting_task",
-            )
-            continue
 
         try:
             # No time.sleep: the token bucket inside generate_json paces the

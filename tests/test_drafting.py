@@ -104,28 +104,6 @@ def test_drafting_sweep_happy_path():
     mock_status.assert_called_once_with(OUTREACH_A, OUTREACH_DRAFTED)
 
 
-def test_drafting_skips_outreach_without_contact_email():
-    """An outreach row with no contact_email is marked failed and never sent to the LLM."""
-    with (
-        patch(
-            "cold_email.workers.drafting.drafting.fetch_pending_drafts",
-            return_value=[_pending_row(OUTREACH_A, contact_email=None)],
-        ),
-        patch(
-            "cold_email.workers.drafting.drafting.load_sender_context",
-            return_value=(_FAKE_CONTEXT, "ok"),
-        ),
-        patch("cold_email.workers.drafting.drafting.draft_email") as mock_draft,
-        patch("cold_email.workers.drafting.drafting.fail_outreach") as mock_fail,
-    ):
-        result = drafting_task(USER_1)
-
-    assert result == {"status": "success", "drafted": 0}
-    mock_draft.assert_not_called()
-    mock_fail.assert_called_once()
-    assert mock_fail.call_args.args[0] == OUTREACH_A
-
-
 def test_drafting_marks_empty_draft_failed():
     """An empty/malformed model draft is terminal for that outreach row."""
     with (

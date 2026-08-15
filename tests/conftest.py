@@ -177,9 +177,9 @@ def sync_session_for(monkeypatch, async_session):
         "cold_email.workers.research.helpers.db_helpers",
         "cold_email.workers.drafting.helpers.db_helpers",
         "cold_email.workers.logistics.helpers.db_helpers",
-        # discovery.py and drafting.py's temporary admin bridge both call
-        # get_sync_session() directly rather than through a db_helpers
-        # submodule, so they need patching here too.
+        # discovery.py, and drafting.py's load_sender_context /
+        # drafting_recovery_task, call get_sync_session() directly rather
+        # than through a db_helpers submodule, so they need patching here too.
         "cold_email.workers.discovery.discovery",
         "cold_email.workers.drafting.drafting",
     ):
