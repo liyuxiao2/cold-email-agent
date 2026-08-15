@@ -1,16 +1,15 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import { ExternalLink, Search } from 'lucide-react';
 import type { LeadItem } from '@/lib/api';
 
 interface LeadExplorerProps {
   leads: LeadItem[];
-  /**
-   * Called on mount and whenever a filter changes. Must be referentially
-   * stable (wrap in useCallback) — it is an effect dependency here.
-   */
-  onFiltersChange: (status: string, search: string) => void;
+  statusFilter: string;
+  searchQuery: string;
+  onStatusFilterChange: (status: string) => void;
+  onSearchQueryChange: (search: string) => void;
 }
 
 const STATUSES = ['all', 'found', 'researched', 'drafted', 'approved', 'sent', 'rejected', 'failed'];
@@ -18,17 +17,17 @@ const STATUSES = ['all', 'found', 'researched', 'drafted', 'approved', 'sent', '
 /**
  * Presentational: the all-leads table.
  *
- * Owns its own filter/search state (nothing else reads it) and reports changes
- * upward; page.tsx does the fetching and hands back the rows.
+ * The filters live in page.tsx rather than here on purpose: this component
+ * unmounts on a tab switch, and local state would reset the filters every time
+ * the user left and came back.
  */
-export default function LeadExplorer({ leads, onFiltersChange }: LeadExplorerProps) {
-  const [statusFilter, setStatusFilter] = useState<string>('all');
-  const [searchQuery, setSearchQuery] = useState<string>('');
-
-  useEffect(() => {
-    onFiltersChange(statusFilter, searchQuery);
-  }, [statusFilter, searchQuery, onFiltersChange]);
-
+export default function LeadExplorer({
+  leads,
+  statusFilter,
+  searchQuery,
+  onStatusFilterChange,
+  onSearchQueryChange,
+}: LeadExplorerProps) {
   return (
     <div>
       {/* Filters & Search */}
@@ -45,7 +44,7 @@ export default function LeadExplorer({ leads, onFiltersChange }: LeadExplorerPro
           {STATUSES.map((st) => (
             <button
               key={st}
-              onClick={() => setStatusFilter(st)}
+              onClick={() => onStatusFilterChange(st)}
               style={{
                 padding: '6px 14px',
                 borderRadius: '8px',
@@ -73,7 +72,7 @@ export default function LeadExplorer({ leads, onFiltersChange }: LeadExplorerPro
             type="text"
             placeholder="Search company or founder..."
             value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
+            onChange={(e) => onSearchQueryChange(e.target.value)}
             style={{
               width: '100%',
               padding: '8px 12px 8px 36px',

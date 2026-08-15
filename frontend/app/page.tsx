@@ -46,6 +46,10 @@ export default function DashboardPage() {
   const [draftQueue, setDraftQueue] = useState<LeadItem[]>([]);
   const [allLeads, setAllLeads] = useState<LeadItem[]>([]);
   const [activeTab, setActiveTab] = useState<'review' | 'explorer'>('review');
+  // The explorer's filters live here, not in LeadExplorer: that component
+  // unmounts on a tab switch, so local state would reset them each time.
+  const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [searchQuery, setSearchQuery] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(true);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [triggeringDiscovery, setTriggeringDiscovery] = useState<boolean>(false);
@@ -74,16 +78,15 @@ export default function DashboardPage() {
     }
   }, [showNotification]);
 
-  // Called by LeadExplorer on mount and on every filter change.
-  const loadExplorerLeads = useCallback(async (status: string, search: string) => {
+  const loadExplorerLeads = useCallback(async () => {
     try {
-      const filter = status === 'all' ? undefined : status;
-      const data = await fetchLeads({ status: filter, search: search || undefined, limit: 100 });
+      const filter = statusFilter === 'all' ? undefined : statusFilter;
+      const data = await fetchLeads({ status: filter, search: searchQuery || undefined, limit: 100 });
       setAllLeads(data.items);
     } catch (err: unknown) {
       console.error(err);
     }
-  }, []);
+  }, [statusFilter, searchQuery]);
 
   useEffect(() => {
     if (!authLoading && !user) router.push('/login');
@@ -93,6 +96,12 @@ export default function DashboardPage() {
   useEffect(() => {
     if (user) loadData();
   }, [user, loadData]);
+
+  useEffect(() => {
+    if (activeTab === 'explorer') {
+      loadExplorerLeads();
+    }
+  }, [activeTab, loadExplorerLeads]);
 
   const handleApprove = async (lead: LeadItem) => {
     try {
@@ -393,12 +402,19 @@ export default function DashboardPage() {
           onReject={handleReject}
           onRegenerate={handleRegenerate}
           onTriggerDiscovery={handleTriggerDiscovery}
+          isAdmin={user.role === 'admin'}
         />
       )}
 
       {/* Tab Content: All Leads Explorer */}
       {activeTab === 'explorer' && (
-        <LeadExplorer leads={allLeads} onFiltersChange={loadExplorerLeads} />
+        <LeadExplorer
+          leads={allLeads}
+          statusFilter={statusFilter}
+          searchQuery={searchQuery}
+          onStatusFilterChange={setStatusFilter}
+          onSearchQueryChange={setSearchQuery}
+        />
       )}
     </div>
   );
