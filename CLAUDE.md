@@ -223,6 +223,7 @@ Tables:
 - **`drafts`**: Subject line, generated email body, `gmail_draft_id`, version, reviewer notes. FK's to `outreach` (PER-USER).
 - **`dead_letter`**: Terminally-failed tasks — nullable `company_id` **and** `outreach_id` (CHECK: exactly one set), `task_name`, `stage`, `error_msg`, `retry_count` (see DLQ above).
 - **`leads_legacy`**: The pre-split `leads` table, renamed (not dropped) by migration `006`. `companies.id` reuses `leads.id` verbatim, so every FK remap onto the new tables is a pure column rename. Kept as a rollback safety net until this deploy is proven; a follow-up migration drops it.
+- **`profiles`** (migration `007`): Per-user sender identity — `user_id` is the PRIMARY KEY (one profile per user, structural not a unique constraint), `name`, `intro`, `linkedin`, `github`, `website`, `experience_pool` (JSONB list), `company_links` (JSONB dict), `resume_pdf` (BYTEA, `STORAGE EXTERNAL` — see below), `resume_filename`, `resume_text`, `parsed_at`. Replaces the old compiled-in `sender_profile.PROFILE` plus the committed `resume.txt`/`resume.pdf`. All reads/writes of `resume_pdf` go through `cold_email/resume_store.py` — no other module touches those bytes. `SenderProfile.from_row` builds the in-memory dataclass from a `profiles` row.
 - **`pending_drafts` View**: Distinct `outreach` rows in `queued` status, joined to their company, contact, and latest research.
 - **`pending_sends` View**: Distinct `outreach` rows in `approved` status (and due, per `scheduled_send_at`), joined to their contact email and latest draft.
 - **`available_contacts` View**: Every eligible `company_contacts` row with its `use_count` (how many `outreach` rows already reference it) — exposes the count rather than filtering on a cap, since baking a cap `K` into the view would make changing that business rule require a migration. Stack 3's per-contact cap selection reads this.
@@ -303,7 +304,10 @@ path runs `migrations/006_multi_tenant_schema.sql` — `scripts/start.sh` only
 runs `Base.metadata.create_all` (which creates the new `companies` /
 `company_contacts` / `outreach` tables, but EMPTY, and provisions no data) and
 `scripts/apply_views.py` (which re-declares `pending_drafts` / `pending_sends`
-/ `available_contacts` against whatever tables already exist). Skipping 006 is
+/ `available_contacts` against whatever tables already exist) plus
+`scripts/apply_storage.py` (which sets `profiles.resume_pdf`'s TOAST storage
+strategy to `EXTERNAL` — another thing `Base.metadata.create_all` cannot
+express, same class of gap as the views). Skipping 006 is
 the DEFAULT outcome of a normal deploy, not an edge case, and it "succeeds"
 quietly:
 - `create_all` makes the new tables, empty. The old `leads` table and its data

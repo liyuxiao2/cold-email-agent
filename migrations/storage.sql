@@ -1,0 +1,25 @@
+-- storage.sql
+--
+-- R32: production has no column storage strategy from a plain schema
+-- provision. scripts/start.sh provisions the schema with
+-- Base.metadata.create_all, and SQLAlchemy's Column API has no way to express
+-- Postgres's TOAST storage strategy — so on a create_all-only database,
+-- profiles.resume_pdf stays at the default EXTENDED strategy, and Postgres
+-- burns CPU trying to compress every PDF write for no size gain (PDFs are
+-- already compressed).
+--
+-- This file is applied on EVERY boot (see scripts/start.sh, right after
+-- scripts/apply_views.py), the same pattern R23 established for database
+-- views: create_all cannot express this, so a hand-written idempotent SQL
+-- file fills the gap. `ALTER TABLE ... SET STORAGE` is naturally idempotent —
+-- re-applying the same strategy is a no-op — so unlike views.sql this file
+-- needs no DROP-before-CREATE dance.
+--
+-- The same ALTER also lives in migrations/007_profiles.sql, so a migration-only
+-- provisioning path (no create_all involved) sets it too. Do NOT de-duplicate
+-- by deleting one copy — each covers a different provisioning path.
+--
+-- Add further post-create_all DDL that SQLAlchemy's Column API cannot express
+-- (another STORAGE strategy, a FILLFACTOR, etc.) as additional statements
+-- here, or as a new file wired into scripts/apply_storage.py's SQL_FILES list.
+ALTER TABLE profiles ALTER COLUMN resume_pdf SET STORAGE EXTERNAL;
