@@ -27,6 +27,11 @@ from tests.conftest import TEST_DB_URL
 
 MIGRATIONS_DIR = pathlib.Path(__file__).resolve().parent.parent / "migrations"
 MIGRATION = MIGRATIONS_DIR / "006_multi_tenant_schema.sql"
+# R33: 007 adds `profiles`, which must be provisioned on the migration-built
+# side too, or test_create_all_and_the_migration_agree_on_indexes_and_constraints
+# would compare schemas of different vintage. Extend this list — not just
+# MIGRATION — as later stacks add migrations that need parity coverage.
+MIGRATIONS = (MIGRATION, MIGRATIONS_DIR / "007_profiles.sql")
 
 # Everything before 006, in the order Postgres saw it in production. Sorted by
 # filename, which is how the files are numbered (note two 002_* files).
@@ -62,9 +67,9 @@ async def _reset_schema(engine) -> None:
     await _run_script(engine, "DROP SCHEMA public CASCADE; CREATE SCHEMA public;")
 
 
-# The tables migration 006 creates or rewrites. Both provisioning paths — this
-# file and Base.metadata.create_all — must produce identical indexes and
-# constraints on all of them.
+# The tables MIGRATIONS creates or rewrites (006 + 007). Both provisioning
+# paths — these files and Base.metadata.create_all — must produce identical
+# indexes and constraints on all of them.
 CONVERGING_TABLES = (
     "companies",
     "company_contacts",
@@ -72,6 +77,7 @@ CONVERGING_TABLES = (
     "research",
     "drafts",
     "dead_letter",
+    "profiles",
 )
 
 
@@ -109,8 +115,13 @@ async def _schema_fingerprint(engine) -> dict:
 
 async def _run_migration(session) -> None:
     # The session's own connection, so the migration's ALTER TABLEs never wait
-    # on a lock held by the seeding transaction.
-    await _exec_script(await session.connection(), MIGRATION.read_text())
+    # on a lock held by the seeding transaction. Runs every file in MIGRATIONS,
+    # not just 006, so the parity test below stays honest (R33) — profiles
+    # (007) must exist on this side or it can never be compared against
+    # create_all's version of the same table.
+    conn = await session.connection()
+    for path in MIGRATIONS:
+        await _exec_script(conn, path.read_text())
     await session.commit()
 
 
