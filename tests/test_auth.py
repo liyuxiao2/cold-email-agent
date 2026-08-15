@@ -1,4 +1,3 @@
-import jwt
 import pytest
 from sqlalchemy import select
 
@@ -145,6 +144,7 @@ async def test_me_reports_gmail_connection_state(async_session, user_client):
 async def test_logout_clears_the_cookie(user_client):
     response = await user_client.post("/api/auth/logout")
     assert response.status_code == 200
-    assert 'ce_session=""' in response.headers["set-cookie"] or "Max-Age=0" in response.headers[
-        "set-cookie"
-    ]
+    assert (
+        'ce_session=""' in response.headers["set-cookie"]
+        or "Max-Age=0" in response.headers["set-cookie"]
+    )
