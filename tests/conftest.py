@@ -299,8 +299,9 @@ async def other_users_profile(async_session):
 async def admin_profile(async_session, admin_user_id):
     """A complete profile with a résumé, owned by the admin.
 
-    Drafting sweeps are single-user (drafting_task() with no args) until
-    Stack 3, so worker tests act on the admin's own profile row.
+    drafting_task(user_id) drafts exactly one user's rows per call, so worker
+    tests that want a full happy-path sweep pass admin_user_id and act on the
+    admin's own profile row.
     """
     from cold_email.database import Profile
 
@@ -396,6 +397,85 @@ async def three_queued_outreach(async_session, admin_user_id, pending_views):
         await _add_queued_outreach(async_session, admin_user_id, f"Acme{i}", f"ada{i}@acme.com")
         for i in range(3)
     ]
+
+
+@pytest_asyncio.fixture
+async def two_users_queued(async_session, pending_views):
+    """Two distinct users, each with exactly one queued outreach row, for
+    asserting that a per-user drafting_task sweep touches only its own user's
+    row."""
+    from cold_email.database import ROLE_USER, User
+
+    user_a = User(email="usera-sweep@example.com", google_sub="sub-usera-sweep", role=ROLE_USER)
+    user_b = User(email="userb-sweep@example.com", google_sub="sub-userb-sweep", role=ROLE_USER)
+    async_session.add_all([user_a, user_b])
+    await async_session.commit()
+
+    await _add_queued_outreach(async_session, user_a.id, "AcmeSweep", "a-contact@acme.com")
+    await _add_queued_outreach(async_session, user_b.id, "GlobexSweep", "b-contact@globex.com")
+
+    return {"user_a": user_a.id, "user_b": user_b.id}
+
+
+@pytest_asyncio.fixture
+async def profiles_for_both(async_session, two_users_queued):
+    """A complete profile and connected Gmail for both users in
+    two_users_queued, so a sweep for either one clears preflight."""
+    from cold_email.auth.crypto import encrypt
+    from cold_email.database import Profile, User
+
+    for key in ("user_a", "user_b"):
+        user_id = two_users_queued[key]
+        user = await async_session.get(User, user_id)
+        user.gmail_refresh_token_enc = encrypt(f"rt-{key}")
+        user.gmail_sender_email = f"{key}@example.com"
+        async_session.add(
+            Profile(
+                user_id=user_id,
+                name=key,
+                intro=f"I am {key}.",
+                experience_pool=["Acme: a thing"],
+            )
+        )
+    await async_session.commit()
+
+
+@pytest_asyncio.fixture
+async def stale_and_fresh_queued(async_session, pending_views):
+    """One user's queued row is old enough to look like a lost dispatch; the
+    other's was just created. The recovery sweep must pick up only the
+    former."""
+    from datetime import UTC, datetime, timedelta
+
+    from cold_email.database import ROLE_USER, User
+
+    stale_user = User(email="stale@example.com", google_sub="sub-stale", role=ROLE_USER)
+    fresh_user = User(email="fresh@example.com", google_sub="sub-fresh", role=ROLE_USER)
+    async_session.add_all([stale_user, fresh_user])
+    await async_session.commit()
+
+    stale_outreach = await _add_queued_outreach(
+        async_session, stale_user.id, "StaleCo", "stale@stale.co"
+    )
+    stale_outreach.created_at = datetime.now(UTC) - timedelta(minutes=45)
+    await _add_queued_outreach(async_session, fresh_user.id, "FreshCo", "fresh@fresh.co")
+    await async_session.commit()
+
+    return {"stale_user": stale_user.id, "fresh_user": fresh_user.id}
+
+
+@pytest_asyncio.fixture
+async def byok_admin(async_session, admin_user_id):
+    """Give the admin a BYOK LLM key, so resolve_llm_credentials returns
+    is_byok=True for their sweeps."""
+    from cold_email.auth.crypto import encrypt
+    from cold_email.database import User
+
+    user = await async_session.get(User, admin_user_id)
+    user.llm_api_key_enc = encrypt("byok-secret-key")
+    user.llm_provider = "groq"
+    await async_session.commit()
+    return user
 
 
 @pytest_asyncio.fixture
