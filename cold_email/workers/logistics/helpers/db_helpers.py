@@ -57,6 +57,21 @@ _CLAIM_SEND_TICKET_SQL = text("""
     RETURNING id
 """)
 
+# Approved rows pending_sends can never surface -- a NULL contact_id
+# (company_contacts.id -> outreach.contact_id is ON DELETE SET NULL) or a
+# missing drafts row both make pending_sends' INNER JOINs drop the row
+# entirely, so claim_due_sends (which selects FROM pending_sends) can never
+# claim it and nothing else watches 'approved'. "Due" mirrors pending_sends'
+# own definition of due (NULL or past scheduled_send_at) so a row scheduled
+# for the future is left alone until it actually needs attention.
+_ORPHANED_APPROVED_SQL = text("""
+    SELECT o.id
+    FROM outreach o
+    WHERE o.status = 'approved'
+      AND (o.scheduled_send_at IS NULL OR o.scheduled_send_at <= now())
+      AND NOT EXISTS (SELECT 1 FROM pending_sends ps WHERE ps.outreach_id = o.id)
+""")
+
 
 def claim_due_sends() -> list[str]:
     """Atomically flip every due 'approved' row to 'sending' and return the
@@ -97,6 +112,16 @@ def claim_send_ticket(draft_id: str, gmail_draft_id: str) -> bool:
         ).first()
         session.commit()
     return claimed is not None
+
+
+def find_orphaned_approved() -> list[str]:
+    """Due (or unscheduled) 'approved' rows that pending_sends can never
+    surface -- see _ORPHANED_APPROVED_SQL. Reachable today via POST
+    /api/dlq/retry, which resets a logistics-stage row to 'approved' without
+    checking whether it still has a contact or a draft."""
+    with get_sync_session() as session:
+        orphaned = session.execute(_ORPHANED_APPROVED_SQL).scalars().all()
+    return [str(outreach_id) for outreach_id in orphaned]
 
 
 def fetch_outreach_status_and_owner(outreach_id: str) -> tuple[str, str] | None:

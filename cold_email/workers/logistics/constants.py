@@ -35,3 +35,12 @@ ERR_SEND_OUTCOME_UNKNOWN = (
     "Send outcome unknown after send_draft was called -- the email may already "
     "have been delivered. Verify the mailbox before retrying."
 )
+
+# Terminal per-outreach failure reason: an 'approved' row that pending_sends
+# can never surface (no contact -- ondelete=SET NULL -- or no drafts row), so
+# claim_due_sends can never claim it and it would otherwise sit invisible
+# forever. Nothing was ever sent, so unlike ERR_SEND_STATUS_UNKNOWN this is a
+# genuine, non-ambiguous terminal failure.
+ERR_ORPHANED_APPROVED = (
+    "Approved outreach has no contact or no draft, so it can never be claimed for sending"
+)

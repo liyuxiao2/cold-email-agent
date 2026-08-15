@@ -283,3 +283,107 @@ async def test_claim_send_ticket_is_a_compare_and_swap(
 
     assert claim_send_ticket(row.draft_id, row.gmail_draft_id) is True
     assert claim_send_ticket(row.draft_id, row.gmail_draft_id) is False
+
+
+@pytest.mark.asyncio
+async def test_approved_row_with_no_contact_is_dead_lettered_by_the_reaper(
+    async_session, admin_user_id, sync_session_for, pending_views
+):
+    """POST /api/dlq/retry can reset a logistics-stage row to 'approved'
+    without checking it still has a contact (company_contacts.id ->
+    outreach.contact_id is ON DELETE SET NULL). pending_sends INNER JOINs
+    company_contacts, so claim_due_sends can never see this row -- nothing
+    watches 'approved' except this reaper pass."""
+    from cold_email.database import OUTREACH_APPROVED, OUTREACH_FAILED, Company, Draft, Outreach
+
+    company = Company(company_name="NoContactCo")
+    async_session.add(company)
+    await async_session.commit()
+    outreach = Outreach(
+        user_id=admin_user_id,
+        company_id=company.id,
+        contact_id=None,
+        status=OUTREACH_APPROVED,
+        scheduled_send_at=None,
+    )
+    async_session.add(outreach)
+    await async_session.commit()
+    async_session.add(
+        Draft(outreach_id=outreach.id, subject_line="Hi", body="Body", gmail_draft_id="gd-1")
+    )
+    await async_session.commit()
+
+    from cold_email.workers.logistics.logistics import reap_stuck_sends
+
+    result = reap_stuck_sends()
+    assert result["reaped"] == 1
+
+    await async_session.refresh(outreach)
+    assert outreach.status == OUTREACH_FAILED
+
+    dl = (await async_session.execute(select(DeadLetter))).scalar_one()
+    assert dl.outreach_id == outreach.id
+    assert dl.stage == "logistics"
+
+
+@pytest.mark.asyncio
+async def test_approved_row_with_no_draft_is_dead_lettered_by_the_reaper(
+    async_session, admin_user_id, sync_session_for, pending_views
+):
+    """The mirror shape: a valid contact but no drafts row at all (drafting
+    never ran, or the draft was deleted). pending_sends INNER JOINs drafts,
+    so this row is equally invisible to claim_due_sends."""
+    from cold_email.database import (
+        OUTREACH_APPROVED,
+        OUTREACH_FAILED,
+        Company,
+        CompanyContact,
+        Outreach,
+    )
+
+    company = Company(company_name="NoDraftCo")
+    async_session.add(company)
+    await async_session.commit()
+    contact = CompanyContact(company_id=company.id, email="c@nodraft.com", eligible=True)
+    async_session.add(contact)
+    await async_session.commit()
+    outreach = Outreach(
+        user_id=admin_user_id,
+        company_id=company.id,
+        contact_id=contact.id,
+        status=OUTREACH_APPROVED,
+        scheduled_send_at=None,
+    )
+    async_session.add(outreach)
+    await async_session.commit()
+
+    from cold_email.workers.logistics.logistics import reap_stuck_sends
+
+    result = reap_stuck_sends()
+    assert result["reaped"] == 1
+
+    await async_session.refresh(outreach)
+    assert outreach.status == OUTREACH_FAILED
+
+    dl = (await async_session.execute(select(DeadLetter))).scalar_one()
+    assert dl.outreach_id == outreach.id
+    assert dl.stage == "logistics"
+
+
+@pytest.mark.asyncio
+async def test_healthy_approved_row_is_not_reaped(
+    async_session, approved_outreach_factory, sync_session_for
+):
+    """A normal approved row (contact + draft, visible in pending_sends) is
+    send_due_task's job, not the reaper's -- it must be left alone."""
+    from cold_email.database import OUTREACH_APPROVED
+
+    outreach = await approved_outreach_factory(scheduled_send_at=None)
+
+    from cold_email.workers.logistics.logistics import reap_stuck_sends
+
+    result = reap_stuck_sends()
+    assert result["reaped"] == 0
+
+    await async_session.refresh(outreach)
+    assert outreach.status == OUTREACH_APPROVED

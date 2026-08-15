@@ -24,11 +24,17 @@ Three tasks:
     ticket is claimed onward is handled inline and never re-raised, so a
     post-send failure can never cause Celery's autoretry to call send_draft
     a second time.
-  * reap_stuck_sends (Beat, hourly) — a row can be claimed 'sending' and then
-    orphaned by a hard worker crash before it reaches 'sent' or 'failed'. Its
-    outcome (sent or not) is unknown, so it is dead-lettered for a human to
-    verify the mailbox, never auto-retried -- auto-retrying a send whose
-    outcome is unknown is exactly how a duplicate send happens.
+  * reap_stuck_sends (Beat, hourly) — two different things can go invisible:
+      1. a row claimed 'sending' and then orphaned by a hard worker crash
+         before it reaches 'sent' or 'failed'. Its outcome (sent or not) is
+         unknown, so it is dead-lettered for a human to verify the mailbox,
+         never auto-retried -- auto-retrying a send whose outcome is unknown
+         is exactly how a double-send happens.
+      2. an 'approved' row pending_sends can never surface (no contact, no
+         draft) -- see find_orphaned_approved. Nothing was ever sent for
+         these, so they are dead-lettered as a genuine (non-ambiguous)
+         terminal failure, not folded into case 1's "unknown, don't retry"
+         framing.
 """
 
 import logging
@@ -41,6 +47,7 @@ from cold_email.database import OUTREACH_APPROVED, OUTREACH_SENDING, OUTREACH_SE
 from cold_email.workers.logistics.constants import (
     ERR_GMAIL_DISCONNECTED,
     ERR_NO_GMAIL_DRAFT,
+    ERR_ORPHANED_APPROVED,
     ERR_SEND_FAILED,
     ERR_SEND_OUTCOME_UNKNOWN,
     ERR_SEND_STATUS_UNKNOWN,
@@ -52,6 +59,7 @@ from cold_email.workers.logistics.helpers.db_helpers import (
     fetch_outreach_status_and_owner,
     fetch_owning_user,
     fetch_send_row,
+    find_orphaned_approved,
     find_stuck_sending,
 )
 from cold_email.workers.shared.constants import DEFAULT_MAX_RETRIES, DEFAULT_RETRY_DELAY
@@ -101,15 +109,18 @@ def send_due_task() -> dict:
 
 @shared_task(name="cold_email.workers.logistics.reap_stuck_sends")
 def reap_stuck_sends() -> dict:
-    """Dead-letter rows stuck at 'sending' -- a worker died mid-send.
+    """Dead-letter rows a healthy scan/task pass can never resolve on its own.
 
-    Surfaced, NOT auto-retried. The row was claimed and may or may not have
-    been delivered; retrying a send whose outcome is unknown is precisely how
-    a double-send happens. A human verifies the mailbox, then retries via the
-    DLQ.
+    Neither case here is auto-retried. Case 1 (stuck 'sending') is genuinely
+    ambiguous: the row was claimed and may or may not have been delivered, and
+    retrying a send whose outcome is unknown is precisely how a double-send
+    happens -- a human verifies the mailbox, then retries via the DLQ. Case 2
+    (orphaned 'approved') is not ambiguous -- nothing was ever sent -- but is
+    still dead-lettered rather than silently fixed, since the underlying
+    cause (a deleted contact, a missing draft) needs a human's attention
+    regardless.
     """
     stuck = find_stuck_sending(STUCK_SENDING_MINUTES)
-
     for outreach_id in stuck:
         fail_outreach(
             outreach_id,
@@ -118,9 +129,22 @@ def reap_stuck_sends() -> dict:
             task_name="cold_email.workers.logistics.reap_stuck_sends",
         )
 
-    if stuck:
-        logger.warning(f"Reaped {len(stuck)} stuck 'sending' row(s) to the DLQ")
-    return {"status": "success", "reaped": len(stuck)}
+    orphaned = find_orphaned_approved()
+    for outreach_id in orphaned:
+        fail_outreach(
+            outreach_id,
+            ERR_ORPHANED_APPROVED,
+            stage=LOGISTICS,
+            task_name="cold_email.workers.logistics.reap_stuck_sends",
+        )
+
+    reaped = len(stuck) + len(orphaned)
+    if reaped:
+        logger.warning(
+            f"Reaped {len(stuck)} stuck 'sending' row(s) and {len(orphaned)} "
+            "orphaned 'approved' row(s) to the DLQ"
+        )
+    return {"status": "success", "reaped": reaped}
 
 
 def _dead_letter_unknown_outcome(outreach_id: str, detail: str) -> None:
