@@ -38,12 +38,18 @@ async def async_session() -> AsyncSession:
 
 
 @pytest_asyncio.fixture
-async def admin_user_id(async_session):
+async def admin_user(async_session):
     """The admin who owns outreach rows in model-level tests."""
     user = User(email="admin@example.com", google_sub="sub-admin", role=ROLE_ADMIN)
     async_session.add(user)
     await async_session.commit()
-    return user.id
+    return user
+
+
+@pytest_asyncio.fixture
+async def admin_user_id(admin_user):
+    """Just the id, for the many existing tests that only need that."""
+    return admin_user.id
 
 
 def _app():
@@ -403,6 +409,31 @@ async def extra_users(async_session):
     async_session.add_all(users)
     await async_session.commit()
     return [u.id for u in users]
+
+
+@pytest_asyncio.fixture
+async def company_factory(async_session):
+    """A factory for a distinct `researched` company per call.
+
+    UNIQUE(user_id, company_id) on outreach forbids two rows for the same
+    user reusing one company, so quota tests that create several outreach
+    rows for one user need a fresh company each time.
+    """
+    import itertools
+
+    from cold_email.database import RESEARCH_RESEARCHED, Company
+
+    counter = itertools.count()
+
+    async def _factory():
+        company = Company(
+            company_name=f"QuotaCo{next(counter)}", research_status=RESEARCH_RESEARCHED
+        )
+        async_session.add(company)
+        await async_session.commit()
+        return company
+
+    return _factory
 
 
 @pytest.fixture
