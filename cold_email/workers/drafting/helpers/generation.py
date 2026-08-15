@@ -44,7 +44,7 @@ def generate_email(row: PendingDraft) -> str:
     """
     tech_stack = [row.tech_stack] if isinstance(row.tech_stack, str) else (row.tech_stack or [])
     recipient_name = " ".join(
-        part for part in (row.contact_first_name, getattr(row, "contact_last_name", None)) if part
+        part for part in (row.contact_first_name, row.contact_last_name) if part
     ) or (row.founder_name or "there")
 
     messages = build_email_draft_messages(

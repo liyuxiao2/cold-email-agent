@@ -21,6 +21,7 @@ def _pending_row(outreach_id, contact_email="contact@acme.com"):
         founder_name="Ada",
         contact_email=contact_email,
         contact_first_name="Ada",
+        contact_last_name="Lovelace",
         contact_position="Founder",
         raw_content="Mock raw content",
         tech_stack="Python",

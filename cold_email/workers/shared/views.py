@@ -23,6 +23,7 @@ class PendingDraft:
     founder_name: str | None
     contact_email: str
     contact_first_name: str | None
+    contact_last_name: str | None
     contact_position: str | None
     raw_content: str
     tech_stack: str | None

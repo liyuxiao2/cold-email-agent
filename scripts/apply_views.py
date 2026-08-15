@@ -4,8 +4,12 @@ Run on every boot by start.sh, right after Base.metadata.create_all. SQLAlchemy
 metadata does not model views (R23), so a create_all-only database never gets
 pending_drafts / pending_sends / available_contacts, and the drafting and
 logistics workers that read them would fail every tick with "relation does not
-exist". CREATE OR REPLACE VIEW makes this idempotent and self-healing: each
-boot re-applies the current definitions with no separate migration step.
+exist". views.sql now precedes each CREATE OR REPLACE VIEW with an explicit
+DROP VIEW IF EXISTS, which is what actually makes this idempotent and
+self-healing across a column-shape change (e.g. a renamed column) — Postgres's
+CREATE OR REPLACE VIEW on its own refuses to rename or drop a view's existing
+output columns, so it alone would NOT have self-healed this stack's own
+lead_id -> outreach_id rename.
 
 Uses the sync engine (not psql — start.sh runs Python) via exec_driver_sql,
 which hands the raw multi-statement SQL straight to psycopg2's cursor.execute
