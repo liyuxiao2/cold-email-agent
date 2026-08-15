@@ -8,8 +8,9 @@ ADMIN_ONLY = [
 ]
 
 USER_ROUTES = [
-    ("GET", "/api/leads"),
-    ("GET", "/api/leads/drafts"),
+    ("GET", "/api/outreach"),
+    ("GET", "/api/outreach/drafts"),
+    ("GET", "/api/companies"),
     ("GET", "/api/pipeline/stats"),
     ("GET", "/api/dlq"),
 ]

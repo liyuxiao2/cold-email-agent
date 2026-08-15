@@ -1,17 +1,84 @@
-from datetime import UTC
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import select
 
 from cold_email.api.main import app
-from cold_email.database import Lead, get_async_session
+from cold_email.database import (
+    OUTREACH_DRAFTED,
+    RESEARCH_FOUND,
+    Company,
+    CompanyContact,
+    Draft,
+    Outreach,
+    User,
+    get_async_session,
+)
 
 
 @pytest.fixture
 def mock_session():
     session = AsyncMock()
     return session
+
+
+@pytest_asyncio.fixture
+async def own_outreach(async_session, user_client):
+    """A drafted outreach row owned by `user_client`'s own account, with a
+    company, an eligible contact, and a draft — enough to exercise every
+    field the serializer emits."""
+    user = (
+        await async_session.execute(select(User).where(User.email == "user@example.com"))
+    ).scalar_one()
+
+    company = Company(
+        company_name="Acme Corp",
+        company_url="https://acme.com",
+        founder_name="Alice",
+        funding_stage="Seed",
+        headcount=10,
+    )
+    async_session.add(company)
+    await async_session.commit()
+
+    contact = CompanyContact(
+        company_id=company.id,
+        email="alice@acme.com",
+        first_name="Alice",
+        position="Founder",
+        confidence=90,
+        is_founder=True,
+        eligible=True,
+    )
+    async_session.add(contact)
+    await async_session.commit()
+
+    outreach = Outreach(
+        user_id=user.id,
+        company_id=company.id,
+        contact_id=contact.id,
+        status=OUTREACH_DRAFTED,
+    )
+    async_session.add(outreach)
+    await async_session.commit()
+
+    # Explicit (past) created_at rather than the server default: this fixture
+    # is reused by a test that adds a second, newer draft and asserts the
+    # newest wins — that ordering must not depend on wall-clock "now".
+    draft = Draft(
+        outreach_id=outreach.id,
+        subject_line="Hi Alice",
+        body="Body text",
+        created_at=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    async_session.add(draft)
+    await async_session.commit()
+
+    await async_session.refresh(outreach)
+    return outreach
 
 
 @pytest.mark.asyncio
@@ -30,61 +97,114 @@ async def test_health_check():
 
 
 @pytest.mark.asyncio
-async def test_pipeline_stats(user_client):
-    mock_db = AsyncMock()
-    mock_result = MagicMock()
-    mock_result.all.return_value = [("drafted", 5), ("found", 10), ("sent", 2)]
-    mock_db.execute.return_value = mock_result
-    app.dependency_overrides[get_async_session] = lambda: mock_db
-
-    response = await user_client.get("/api/pipeline/stats")
-
-    assert response.status_code == 200
-    data = response.json()
-    assert data["drafted"] == 5
-    assert data["found"] == 10
-    assert data["sent"] == 2
-    assert data["total"] == 17
+async def test_stats_reports_both_levels(async_session, user_client):
+    body = (await user_client.get("/api/pipeline/stats")).json()
+    assert "companies" in body and "outreach" in body
+    assert set(body["companies"]) >= {"found", "researched", "failed"}
+    assert set(body["outreach"]) >= {
+        "queued",
+        "drafted",
+        "approved",
+        "sent",
+        "rejected",
+        "failed",
+    }
 
 
 @pytest.mark.asyncio
-async def test_list_leads(user_client):
-    mock_db = AsyncMock()
+async def test_stats_outreach_is_scoped_to_caller(async_session, user_client, other_user_outreach):
+    """The `outreach` half of /api/pipeline/stats must not count another
+    user's rows — the same tenancy boundary as every other outreach query."""
+    body = (await user_client.get("/api/pipeline/stats")).json()
+    assert body["outreach"]["drafted"] == 0
 
-    mock_lead = MagicMock(spec=Lead)
-    mock_lead.id = "00000000-0000-0000-0000-000000000001"
-    mock_lead.company_name = "Acme Corp"
-    mock_lead.founder_name = "Alice"
-    mock_lead.founder_email = "alice@acme.com"
-    mock_lead.company_url = "https://acme.com"
-    mock_lead.linkedin_url = None
-    mock_lead.funding_stage = "Seed"
-    mock_lead.headcount = 10
-    mock_lead.status = "drafted"
-    mock_lead.error_msg = None
-    mock_lead.created_at = None
-    mock_lead.updated_at = None
-    mock_lead.drafts = []
-    mock_lead.research = []
 
-    mock_scalars = MagicMock()
-    mock_scalars.all.return_value = [mock_lead]
-    mock_result = MagicMock()
-    mock_result.scalars.return_value = mock_scalars
-
-    mock_count_result = MagicMock()
-    mock_count_result.scalar_one.return_value = 1
-
-    mock_db.execute.side_effect = [mock_result, mock_count_result]
-    app.dependency_overrides[get_async_session] = lambda: mock_db
-
-    response = await user_client.get("/api/leads?limit=10")
+@pytest.mark.asyncio
+async def test_list_outreach_includes_company_and_contact(user_client, own_outreach):
+    response = await user_client.get("/api/outreach")
 
     assert response.status_code == 200
     data = response.json()
     assert data["total"] == 1
-    assert len(data["items"]) == 1
-    assert data["items"][0]["company_name"] == "Acme Corp"
+    item = data["items"][0]
+    assert item["company"]["company_name"] == "Acme Corp"
+    assert item["contact"]["email"] == "alice@acme.com"
+    assert item["contact"]["position"] == "Founder"
+
+
+@pytest.mark.asyncio
+async def test_drafts_queue_returns_only_the_callers_rows(
+    async_session, user_client, other_user_outreach
+):
+    """Tenancy isolation. Invisible in single-user manual testing and
+    catastrophic in production."""
+    body = (await user_client.get("/api/outreach/drafts")).json()
+    assert body == []
+
+
+@pytest.mark.asyncio
+async def test_drafts_queue_includes_the_callers_own_row(user_client, own_outreach):
+    body = (await user_client.get("/api/outreach/drafts")).json()
+    assert len(body) == 1
+    assert body[0]["outreach_id"] == str(own_outreach.id)
+    assert body[0]["company"]["company_name"] == "Acme Corp"
+    assert body[0]["contact"]["first_name"] == "Alice"
+    assert body[0]["draft"]["subject_line"] == "Hi Alice"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["approve", "reject", "regenerate"])
+async def test_cannot_mutate_another_users_outreach(
+    async_session, user_client, other_user_outreach, action
+):
+    """404, not 403: a 403 confirms the id exists, turning an authorization
+    check into an existence oracle."""
+    response = await user_client.post(f"/api/outreach/{other_user_outreach.id}/{action}")
+    assert response.status_code == 404
+
+    await async_session.refresh(other_user_outreach)
+    assert other_user_outreach.status == "drafted"  # unchanged
+
+
+@pytest.mark.asyncio
+async def test_approve_own_outreach(async_session, user_client, own_outreach):
+    with patch("cold_email.workers.logistics.logistics.logistics_task.delay") as mock_delay:
+        mock_delay.return_value.id = "logistics-task-789"
+        response = await user_client.post(f"/api/outreach/{own_outreach.id}/approve")
+
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+    assert response.json()["status"] == "approved"
+
+    await async_session.refresh(own_outreach)
+    assert own_outreach.status == "approved"
+
+
+@pytest.mark.asyncio
+async def test_reject_own_outreach_saves_notes(async_session, user_client, own_outreach):
+    response = await user_client.post(
+        f"/api/outreach/{own_outreach.id}/reject", json={"notes": "wrong fit"}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "rejected"
+
+    await async_session.refresh(own_outreach)
+    assert own_outreach.status == "rejected"
+    assert own_outreach.error_msg == "wrong fit"
+
+
+@pytest.mark.asyncio
+async def test_regenerate_own_outreach_resets_to_queued(async_session, user_client, own_outreach):
+    with patch("cold_email.workers.drafting.drafting.drafting_task.delay") as mock_delay:
+        mock_delay.return_value.id = "drafting-task-456"
+        response = await user_client.post(f"/api/outreach/{own_outreach.id}/regenerate")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "queued"
+
+    await async_session.refresh(own_outreach)
+    assert own_outreach.status == "queued"
 
 
 @pytest.mark.asyncio
@@ -112,23 +232,12 @@ async def test_trigger_drafting(admin_client):
 
 
 @pytest.mark.asyncio
-async def test_trigger_research_requeues_found_leads(admin_client):
-    """Requeues only 'found' (orphaned, never-researched) leads. Terminally
-    'failed' leads are recovered separately via the dead-letter queue.
-
-    Uses admin_client because /api/pipeline/research is admin-only."""
-    found_lead = MagicMock(spec=Lead)
-    found_lead.id = "00000000-0000-0000-0000-000000000001"
-    found_lead.status = "found"
-
-    mock_scalars = MagicMock()
-    mock_scalars.all.return_value = [found_lead]
-    mock_result = MagicMock()
-    mock_result.scalars.return_value = mock_scalars
-
-    mock_db = AsyncMock()
-    mock_db.execute.return_value = mock_result
-    app.dependency_overrides[get_async_session] = lambda: mock_db
+async def test_trigger_research_requeues_found_companies(async_session, admin_client):
+    """Requeues only 'found' (orphaned, never-researched) companies. Terminally
+    'failed' companies are recovered separately via the dead-letter queue."""
+    company = Company(company_name="Orphan Co", research_status=RESEARCH_FOUND)
+    async_session.add(company)
+    await async_session.commit()
 
     with patch("cold_email.workers.research.research.research_task.delay") as mock_delay:
         response = await admin_client.post("/api/pipeline/research")
@@ -141,65 +250,25 @@ async def test_trigger_research_requeues_found_leads(admin_client):
 
 
 @pytest.mark.asyncio
-async def test_approve_lead(user_client):
-    mock_db = AsyncMock()
-    mock_lead = MagicMock(spec=Lead)
-    mock_lead.id = "00000000-0000-0000-0000-000000000001"
-    mock_lead.status = "drafted"
-    mock_db.get.return_value = mock_lead
-    app.dependency_overrides[get_async_session] = lambda: mock_db
-
-    with patch("cold_email.workers.logistics.logistics.logistics_task.delay") as mock_delay:
-        mock_delay.return_value.id = "logistics-task-789"
-        response = await user_client.post(f"/api/leads/{mock_lead.id}/approve")
-
-    assert response.status_code == 200
-    assert response.json()["success"] is True
-    assert response.json()["status"] == "approved"
-    assert mock_lead.status == "approved"
-
-
-@pytest.mark.asyncio
-async def test_draft_review_queue_returns_newest_draft(user_client):
+async def test_draft_review_queue_returns_newest_draft(async_session, user_client, own_outreach):
     """After a regenerate, the review queue must show the NEWEST draft, even when
     every draft row shares version=1 (version is vestigial). Selection is by
     created_at, consistent with the pending_sends view used for sending."""
-    from datetime import datetime
+    # own_outreach already carries one draft (created "now"); add an older one
+    # with a later `created_at` to prove the newest — not the last-inserted —
+    # wins.
+    newer = Draft(
+        outreach_id=own_outreach.id,
+        subject_line="s",
+        body="Hi Kenny, new template",
+        version=1,
+        gmail_draft_id="gmail-new",
+        created_at=datetime(2026, 1, 2, tzinfo=UTC),
+    )
+    async_session.add(newer)
+    await async_session.commit()
 
-    def _draft(body, gmail_id, when):
-        d = MagicMock()
-        d.id = gmail_id
-        d.subject_line = "s"
-        d.body = body
-        d.version = 1  # every draft is v1 — the bug's precondition
-        d.gmail_draft_id = gmail_id
-        d.created_at = when
-        return d
-
-    old = _draft("OLD freeform body", "gmail-old", datetime(2026, 8, 13, 0, 58, tzinfo=UTC))
-    new = _draft("Hi Kenny, new template", "gmail-new", datetime(2026, 8, 13, 1, 50, tzinfo=UTC))
-
-    lead = MagicMock(spec=Lead)
-    lead.id = "00000000-0000-0000-0000-00000000000a"
-    lead.company_name = "Turo"
-    lead.founder_name = "Kenny"
-    lead.founder_email = "k@turo.com"
-    lead.company_url = "https://turo.com"
-    lead.linkedin_url = None
-    lead.funding_stage = None
-    lead.headcount = None
-    lead.status = "drafted"
-    lead.created_at = datetime(2026, 8, 13, 0, 0, tzinfo=UTC)
-    lead.drafts = [old, new]  # oldest FIRST — trips max(key=version) tie
-    lead.research = []
-
-    mock_db = AsyncMock()
-    result = MagicMock()
-    result.scalars.return_value.all.return_value = [lead]
-    mock_db.execute.return_value = result
-    app.dependency_overrides[get_async_session] = lambda: mock_db
-
-    response = await user_client.get("/api/leads/drafts")
+    response = await user_client.get("/api/outreach/drafts")
 
     assert response.status_code == 200
     draft = response.json()[0]["draft"]

@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from cold_email.database import Lead, get_async_session
+from cold_email.database import Company, get_async_session
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +15,7 @@ router = APIRouter(tags=["system"])
 async def health_check(session: AsyncSession = Depends(get_async_session)):
     """Health check verifying API and Database connectivity."""
     try:
-        await session.execute(select(func.count()).select_from(Lead))
+        await session.execute(select(func.count()).select_from(Company))
         db_status = "connected"
     except Exception as e:
         logger.error(f"Health check DB error: {e}")
