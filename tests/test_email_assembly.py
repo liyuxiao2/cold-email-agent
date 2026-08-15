@@ -17,11 +17,16 @@ PROFILE = SenderProfile(
 
 def _row(founder_name="Kenny Chan"):
     return PendingDraft(
-        lead_id="00000000-0000-0000-0000-00000000000a",
+        outreach_id="00000000-0000-0000-0000-00000000000a",
+        user_id="00000000-0000-0000-0000-00000000000b",
+        company_id="00000000-0000-0000-0000-00000000000c",
+        contact_id="00000000-0000-0000-0000-00000000000d",
         company_name="Turo",
-        founder_name=founder_name,
-        founder_email="kenny@turo.com",
         company_url="https://turo.com",
+        founder_name=founder_name,
+        contact_email="kenny@turo.com",
+        contact_first_name=founder_name.split()[0] if founder_name else None,
+        contact_position="Founder",
         raw_content="",
         tech_stack="Go",
         recent_news="Launched marketplace v2",
