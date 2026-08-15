@@ -235,3 +235,47 @@ async def other_user_outreach(async_session):
     async_session.add(outreach)
     await async_session.commit()
     return outreach
+
+
+@pytest_asyncio.fixture
+async def seeded_profile(async_session, user_client):
+    """A complete profile with a résumé, owned by user_client's account."""
+    from sqlalchemy import select
+
+    from cold_email.database import Profile, User
+
+    user = (
+        await async_session.execute(select(User).where(User.email == "user@example.com"))
+    ).scalar_one()
+    profile = Profile(
+        user_id=user.id,
+        name="Test User",
+        intro="I am a test.",
+        experience_pool=["Acme: a thing"],
+        resume_pdf=b"%PDF-1.7\n" + b"x" * 2048,
+        resume_filename="cv.pdf",
+    )
+    async_session.add(profile)
+    await async_session.commit()
+    return profile
+
+
+@pytest_asyncio.fixture
+async def other_users_profile(async_session):
+    """A profile with a DIFFERENT résumé, owned by somebody else."""
+    from cold_email.database import ROLE_USER, Profile, User
+
+    other = User(email="other2@example.com", google_sub="sub-other2", role=ROLE_USER)
+    async_session.add(other)
+    await async_session.commit()
+
+    profile = Profile(
+        user_id=other.id,
+        name="Other",
+        intro="Not you.",
+        resume_pdf=b"%PDF-1.7 SOMEONE ELSE",
+        resume_filename="other.pdf",
+    )
+    async_session.add(profile)
+    await async_session.commit()
+    return profile
