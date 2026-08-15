@@ -7,6 +7,7 @@ import { getProfile, saveProfile, startGoogleLogin, type SenderProfile } from '@
 import { useAuth } from '@/lib/auth';
 import ProfileForm from '@/components/ProfileForm';
 import ResumeUpload from '@/components/ResumeUpload';
+import LlmKeyForm from '@/components/LlmKeyForm';
 
 const cardStyle: React.CSSProperties = {
   backgroundColor: 'var(--bg-card)',
@@ -184,6 +185,10 @@ export default function ProfilePage() {
 
       <div style={cardStyle}>
         <ProfileForm key={resumeSuggestion ? 'suggested' : 'saved'} initial={formInitial} onSave={handleSave} />
+      </div>
+
+      <div style={cardStyle}>
+        <LlmKeyForm />
       </div>
     </main>
   );
