@@ -1,6 +1,6 @@
-# Handoff — Multi-Tenant Revamp, stopped after Stack 2
+# Handoff — Multi-Tenant Revamp (all four phases complete)
 
-_Written 2026-08-15. Stacks 1a, 1b, and 2 are built and in review. Stacks 3 and 4 are specced and planned but **not started**._
+_Written 2026-08-15, updated after completion. **All four phases are built and in review as 108 stacked PRs.** 450 tests pass at the stack tip._
 
 ---
 
@@ -30,28 +30,29 @@ Billing was explicitly deferred. Nothing in the design blocks Stripe later.
 | PRs | Branches | Contents |
 |---|---|---|
 | [#35](https://github.com/liyuxiao2/cold-email-agent/pull/35) | `docs/multi-tenant-revamp-specs` | Specs + plans only, no code |
-| **#39–#58** | `mt/01-…` → `mt/20-…` | Stack 1a — auth & roles |
-| **#59–#80** | `mt/21-…` → `mt/42-…` | Stack 1b — data model split |
-| **#81–#96** | `mt/43-…` → `mt/58-…` | Stack 2 — per-user sender identity |
+| **#39-#58** | `mt/01-…` → `mt/20-…` | Phase 1a — auth & roles |
+| **#59-#80** | `mt/21-…` → `mt/42-…` | Phase 1b — data model split |
+| **#81-#96** | `mt/43-…` → `mt/58-…` | Phase 2 — per-user sender identity |
+| **#100-#127** | `mt/59-…` → `mt/86-…` | Phase 3 — pool, contact spreading, per-user drafting, quota, BYOK |
+| **#128-#149** | `mt/87-…` → `mt/108-…` | Phase 4 — scheduled sends + daily cadence |
 
-**58 PRs, at most 7 files each.** Read them in order starting at #39; each PR body names its
-stack position and its base branch. Branch names sort in stack order.
+**108 code PRs, at most 7 files each.** Read them in order; each PR title carries its stack
+position (`[N/108]`) and each body names its base branch. Branch names sort in stack order.
+The PR *numbers* above are GitHub's and are not contiguous with the stack positions — trust the
+titles.
 
-⚠️ **Intermediate PRs are not individually green.** A rename cascades across several PRs (e.g.
-deleting the `Lead` ORM model breaks ~30 callers until the following PRs land), so the **stack
-tip (#96 / `mt/58-docs-handoff`) is the green bar** — 314 tests pass there. This was a deliberate
-choice: forcing every PR green would either merge them back together or require throwaway shims.
+**Everything is built.** Tests grew 52 → 136 → 256 → 314 → 384 → **450**. `ruff check .`,
+`ruff format --check .`, and `cd frontend && npm run build` all pass at the stack tip
+(`mt/108-feat-frontend-approve-all-control-fix-mi`).
 
-An earlier attempt shipped this as three subsystem-sized PRs (42 / 63 / 52 files); those were
-closed as unreviewable and superseded by this stack. Same commits, same final tree — verified
+⚠️ **Intermediate PRs are not individually green.** A rename cascades across several PRs (deleting
+the `Lead` ORM model breaks ~30 callers until the following PRs land), so the **stack tip is the
+green bar.** This was deliberate: forcing every PR green would either merge them back together or
+require throwaway shims.
+
+An earlier attempt shipped phases 1a-2 as three subsystem-sized PRs (42 / 63 / 52 files); those
+were closed as unreviewable and superseded by this stack. Same commits, same final tree — verified
 byte-identical via `git rev-parse <tip>^{tree}`.
-
-**Not started:** Stack 3 (`feat/pool-and-drafting`) and Stack 4 (`feat/scheduling`). Both are
-fully specced and planned — see §5. **Build them as deep stacks of ≤7-file PRs from the start**,
-using each plan's task boundaries as PR boundaries.
-
-Test count grew 52 → 136 → 256 → 314. `ruff check .`, `ruff format --check .`, and
-`cd frontend && npm run build` all pass on `feat/sender-identity`.
 
 ### Where to read the design
 
@@ -201,54 +202,67 @@ Worth knowing, because several were latent for a long time and the same classes 
 
 ---
 
-## 5. What remains: Stacks 3 and 4
+## 5. Phases 3 and 4, as built
 
-Both are fully specced and planned. Read the spec, then the plan.
+Both landed. What matters if you touch them:
 
-### Stack 3 — `feat/pool-and-drafting` (base: `feat/sender-identity`)
+### Phase 3 — pool browsing, contact spreading, per-user drafting (PRs #59-#86)
 
-- Spec: `docs/superpowers/specs/2026-08-14-stack-3-pool-drafting-design.md`
-- Plan: `docs/superpowers/plans/2026-08-14-stack-3-pool-drafting.md` (9 tasks)
+**The most important thing in it was a deletion.** `bridge_queue_admin_outreach` — temporary
+scaffolding from phase 1b — is gone. Had it survived, it would have looked like working software
+while re-creating admin outreach for every researched company every 15 minutes: silently undoing a
+user's deselection, bypassing the per-contact cap and quotas entirely (it consulted neither), and
+always choosing the single highest-confidence contact, reintroducing the exact "every user emails
+the same founder" problem the phase existed to eliminate.
 
-Ships: pool browser, contact selection with a global per-contact cap, on-demand per-user
-drafting, a Redis token bucket replacing `time.sleep`, per-user quota, optional BYOK.
+**Contact spreading works as designed** — verified by running the real function against the live
+view. `select_contact` orders `use_count ASC, confidence DESC, is_founder DESC, contact_id ASC`.
+`is_founder` deliberately sits BELOW `use_count`: above it, volume re-concentrates on exactly the
+address spreading protects. The final `contact_id ASC` gives a total ordering, without which two
+equal rows make tests flaky in a way that looks like a selection bug. The cap is a **heuristic,
+not an invariant** — concurrent requests can exceed it, and enforcing it exactly would serialise
+pool selection across all users for a bound that is itself approximate.
 
-**The most important thing in Stack 3 is a deletion.** `bridge_queue_admin_outreach` in
-`cold_email/workers/drafting/drafting.py` is temporary scaffolding from Stack 1b, banner-marked
-for removal. **If left in place after Stack 3 lands it would look like working software while
-silently:** re-creating admin outreach for every researched company every 15 minutes (undoing a
-user's deselection), bypassing the per-contact cap and quotas entirely (it consults neither),
-and always choosing the single highest-confidence contact — reintroducing the exact "every user
-emails the same founder" problem the whole contact-spreading design exists to prevent.
+**Two Criticals were caught by the final review, not by tests:**
+- **BYOK was 100% broken for Gemini.** `generate_json` walked the model chain without consulting
+  `credentials.provider`, so a correctly-labelled Gemini key went to Groq first; Groq's
+  `AuthenticationError` isn't fallback-able, so it re-raised, was swallowed as a transient, and the
+  hourly sweep re-dispatched the same doomed batch forever. The user saw "Key saved" and their
+  selections silently never produced drafts.
+- **Migration 008 was applied by nothing.** It was the first migration to ALTER an existing table,
+  and `create_all` never alters. Boot: `seed_admin` failed and was swallowed, `/api/health`
+  returned 200 (it only counts `Company`), Cloud Run cut traffic over, and then every
+  authenticated request 500'd. A full outage the platform reported as healthy.
 
-Also note: Stack 3's plan specifies `drafting_task(user_id)`. Stack 2's merge-gate fix already
-made the sweep group by user internally without changing the Celery signature, so Stack 3
-narrows it to one user per dispatch — check `drafting.py`'s comment before rewriting.
+### Phase 4 — scheduled sends and cadence (PRs #87-#108)
 
-### Stack 4 — `feat/scheduling` (base: `feat/pool-and-drafting`)
+**The send path is the most consequential code in the project**, because sending twice is
+unrecoverable. Three layers protect it:
 
-- Spec: `docs/superpowers/specs/2026-08-14-stack-4-scheduling-design.md`
-- Plan: `docs/superpowers/plans/2026-08-14-stack-4-scheduling.md` (6 tasks)
+1. The scanner claims rows in the **same `UPDATE` that selects them**
+   (`WHERE status='approved' ... RETURNING id`) and dispatches only the returned ids. Celery
+   guarantees at-least-once *task* delivery, which over a set that only empties on success becomes
+   at-least-once *email*.
+2. `logistics_task` re-checks the row is still `sending` before sending.
+3. **A second claim, immediately before the send: `gmail_draft_id` itself is the ticket.**
+   `claim_send_ticket` nulls it via `UPDATE ... WHERE gmail_draft_id = :expected RETURNING id`, so
+   two concurrent executions of the same claimed row cannot both send. Everything from that claim
+   onward is handled inline and never re-raised, so a post-send failure can't trigger Celery's
+   autoretry into a second send.
 
-Ships: per-email scheduled sends, a daily cadence, a due-send Beat scanner.
+`sent` is marked **after** the send, deliberately: a lost email that looks delivered is invisible
+forever, whereas a delivered email that looks pending lands in the DLQ where a human will look.
 
-Most of the schema already exists — `outreach.scheduled_send_at` was created in 1b and
-`pending_sends` already filters on it, so NULL means "send immediately" today.
+**The reaper policy is deliberately inverted from the drafting one.** A stranded `drafting` row is
+reclaimed and retried (bounded, then dead-lettered) because no email has left the building — the
+Gmail draft is only created after the LLM call succeeds. A stranded `sending` row is
+**dead-lettered and never auto-retried**, because the send may already have gone out. Same claim
+shape, opposite policy. Don't let "follow the existing pattern" collapse them.
 
-**The load-bearing property is the claim-before-dispatch.** Celery guarantees at-least-once
-*task* delivery, so a scanner running every 5 minutes over rows that only leave the set on
-success will eventually dispatch one twice — and a cold email sent twice to a founder cannot be
-undone. The scanner must mark rows `sending` in the **same `UPDATE`** that selects them
-(`UPDATE ... WHERE status='approved' RETURNING id`) and dispatch only the returned ids. Rows
-stuck in `sending` are dead-lettered, **never auto-retried** — retrying a send whose outcome is
-unknown is exactly how a double-send happens.
-
-Also: `celery_app.py` sets `timezone="America/Toronto"`, which governs **Beat's cron
-interpretation only**. The scanner must use `datetime.now(timezone.utc)` explicitly. Inheriting
-that process default is how a scheduler ends up five hours off in production and correct on a
-laptop. Both DST transitions have specified tests.
-
----
+**Time handling:** everything is stored and compared in UTC; the cadence carries an IANA zone
+*name*. Storing local times makes DST a correctness bug (`America/Toronto` has a day with no 02:30
+and a day with two), and a fixed offset is wrong for half the year. `celery_app.timezone` governs
+Beat's cron interpretation ONLY — the scanner uses `datetime.now(timezone.utc)` explicitly.
 
 ## 6. How this was built, if you want to continue the same way
 
