@@ -27,10 +27,8 @@ This guide provides instructions for deploying the **Cold Email Agent** backend 
 | `GROQ_API_KEY` | Groq API Key (llama models in fallback chain) | `gsk_...` |
 | `HUNTER_API_KEY` | Hunter.io Email Finder Key | From Hunter dashboard |
 | `MODEL_FALLBACK_CHAIN` | Optional JSON array overriding the LLM chain | `["llama-3.3-70b-versatile","gemini-3.5-flash-lite"]` |
-| `GMAIL_CLIENT_ID` | Google OAuth2 Client ID | GCP Credentials |
-| `GMAIL_CLIENT_SECRET` | Google OAuth2 Client Secret | GCP Credentials |
-| `GMAIL_REFRESH_TOKEN` | Google OAuth2 Refresh Token (per-user in a later stack) | Gmail OAuth flow |
-| `GMAIL_SENDER_EMAIL` | Sender email address (per-user in a later stack) | `you@company.com` |
+| `GMAIL_CLIENT_ID` | Google OAuth2 Client ID — APP-level; Google requires it to refresh any user's token, so there is one pair for the whole deployment, not one per user | GCP Credentials |
+| `GMAIL_CLIENT_SECRET` | Google OAuth2 Client Secret — APP-level, same reasoning as above | GCP Credentials |
 | `SESSION_SECRET` | HS256 signing key for the session JWT | `secrets.token_urlsafe(48)` |
 | `ENCRYPTION_KEY` | Fernet key encrypting per-user Gmail refresh tokens at rest | `Fernet.generate_key()` |
 | `GOOGLE_REDIRECT_URI` | OAuth callback URL; must exactly match the Google Cloud Console entry | `https://<backend>/api/auth/google/callback` |
@@ -39,9 +37,33 @@ This guide provides instructions for deploying the **Cold Email Agent** backend 
 | `COOKIE_SECURE` | Set the session cookie's `Secure` flag; `true` in production, `false` only for local `http` dev | `true` |
 | `CORS_ORIGINS` | Allowed frontend domains — **must be an explicit list, never `["*"]`**: browsers reject a wildcard origin combined with `allow_credentials=True`, so a wildcard would silently break cookie-based sessions | `["https://your-app.vercel.app", "http://localhost:3000"]` |
 
-> Sender identity (name, intro, links, experience bullets) is code, not config — edit `cold_email/sender_profile.py`.
+> Sender identity (name, intro, links, résumé, experience bullets) is per-user data in the `profiles` table (set through onboarding / `PUT /api/profile`), not config or code — see CLAUDE.md's Sender Identity section. There is no `GMAIL_REFRESH_TOKEN` / `GMAIL_SENDER_EMAIL` env var: each user's refresh token is captured during their own Google sign-in and stored encrypted on the `users` table, resolved per-request/per-sweep rather than read from settings.
 
 > ⚠️ **Back up `ENCRYPTION_KEY` before any user signs in.** It is unrecoverable: losing or rotating it makes every stored Gmail refresh token undecryptable and forces every user to re-consent through Google Sign-In.
+
+### Post-`create_all` DDL (résumé storage)
+
+Production provisions its schema with `Base.metadata.create_all`
+(`scripts/start.sh`), which cannot express every DDL SQLAlchemy's Column API
+has no vocabulary for — column storage strategy is one. `profiles.resume_pdf`
+needs `STORAGE EXTERNAL` (out-of-line, uncompressed) instead of Postgres's
+default `EXTENDED` (compress then out-of-line): PDFs are already compressed,
+so the default strategy burns CPU on every write for zero size gain.
+
+| What | Where | When it runs |
+|---|---|---|
+| `ALTER TABLE profiles ALTER COLUMN resume_pdf SET STORAGE EXTERNAL` | `migrations/storage.sql` | Applied via `scripts/apply_storage.py`, called from `scripts/start.sh` on **every** container boot (idempotent — re-applying the same storage strategy is a no-op) |
+
+If a later change needs another `create_all`-inexpressible column setting,
+append its `.sql` file to `scripts/apply_storage.py`'s `SQL_FILES` tuple —
+don't add a second script-plus-boot-hook mechanism for it.
+
+**Résumé uploads are capped at 5MB** (`resume_store.MAX_RESUME_BYTES`), enforced
+server-side (`validate_resume`) regardless of what the upload UI pre-checks.
+This isn't just about request size: **Cloud SQL disk grows automatically but
+never shrinks**, so an unbounded upload path would permanently inflate the
+instance — and every backup taken of it — the first time someone uploads an
+oversized file.
 
 ### Frontend Configuration (Vercel)
 

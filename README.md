@@ -57,7 +57,7 @@ Edit `.env` and fill in your API keys:
 - `GEMINI_API_KEY` - get from [aistudio.google.com](https://aistudio.google.com/apikey)
 - `GROQ_API_KEY` - get from [console.groq.com](https://console.groq.com/keys)
 - `HUNTER_API_KEY` - get from [hunter.io](https://hunter.io) (founder email discovery)
-- `GMAIL_*` - OAuth2 client credentials for the shared sending mailbox (see [Google OAuth setup](#google-oauth-setup) below — the web consent flow now supersedes minting these with `scripts/gmail_auth.py`)
+- `GMAIL_CLIENT_ID` / `GMAIL_CLIENT_SECRET` - the OAuth2 *application's* credentials, not a mailbox's (see [Google OAuth setup](#google-oauth-setup) below). Every user connects their own mailbox by signing in with Google; there is no separate script or per-mailbox credential to mint.
 - Auth vars (`SESSION_SECRET`, `ENCRYPTION_KEY`, `GOOGLE_REDIRECT_URI`, `FRONTEND_URL`, `ADMIN_EMAIL`, `COOKIE_SECURE`, `CORS_ORIGINS`) - see [Google OAuth setup](#google-oauth-setup) below
 
 ### Google OAuth setup
@@ -81,7 +81,21 @@ Sign-in and sending both go through the same Google Cloud OAuth client — no se
    ```
 4. **Set `ADMIN_EMAIL`** to the Google account that should be seeded as the first admin. It's created (or promoted, if it already exists) on every boot — see `scripts/seed_admin.py`.
 
-`scripts/gmail_auth.py` still exists for minting a standalone Gmail refresh token, but the web consent flow above is now how users (including the sender mailbox owner) authenticate — you no longer need to run that script as part of setup.
+### First sign-in: onboarding
+
+There's no `scripts/gmail_auth.py` to run and no compiled-in sender identity
+to edit — every user sets up their own by signing in:
+
+1. **Sign in with Google.** The consent screen grants both identity and
+   `gmail.compose` in one flow, so this is also how each user connects their
+   own Gmail account.
+2. **Upload a résumé** (optional — you can skip and fill in manually). It's
+   parsed into a *suggested* profile; nothing is saved yet.
+3. **Review the extracted profile** — name, intro, links, and experience
+   bullets — and edit anything the extraction got wrong.
+4. **Save.** That's the first `PUT /api/profile`; from then on the drafting
+   sweep uses this profile, this résumé, and this Gmail connection to draft
+   and send on that user's behalf.
 
 ### 3. Run everything
 

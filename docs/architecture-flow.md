@@ -42,6 +42,20 @@ graph TD
     Log -->|"send_draft"| Sent["status=sent"]
 ```
 
+`drafting_task` also depends on three per-user inputs it loads once per sweep
+(`load_sender_context`, `cold_email/workers/drafting/drafting.py`) — a
+missing profile or a disconnected Gmail account aborts the whole sweep before
+any row is touched (leaving rows `queued`, no dead-letter row) rather than
+failing row-by-row:
+
+```mermaid
+graph LR
+    Profile[("profiles<br/>name, intro, links,<br/>experience_pool")] --> Draft[drafting_task]
+    Resume[("resume_pdf bytea<br/>(TOAST, EXTERNAL)")] --> Draft
+    Creds[("users.gmail_refresh_token_enc<br/>(Fernet)")] --> Draft
+    Draft --> Gmail["Gmail draft in the USER's mailbox"]
+```
+
 > **Temporary bridge.** Nothing creates `outreach` rows via `POST
 > /api/outreach` yet — Stack 3 adds the pool-selection UI. Until then,
 > `bridge_queue_admin_outreach()` (called at the top of every `drafting_task`

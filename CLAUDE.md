@@ -68,8 +68,13 @@ The entire production stack runs 24/7 in Google Cloud and Vercel:
 | **Retry DLQ** | `POST /api/dlq/retry` | Re-dispatches dead-lettered tasks (optional `?stage=research\|drafting\|logistics`); resets each row and clears it (admin) |
 | **Google Login** | `GET /api/auth/google/login` | Returns `{authorize_url}` for the consent screen (carries a signed CSRF state nonce) |
 | **OAuth Callback** | `GET /api/auth/google/callback` | Verifies state, exchanges the code, sets the session cookie, redirects to `FRONTEND_URL` |
-| **Current User** | `GET /api/auth/me` | `{id, email, name, picture_url, role, gmail_connected}` — the only source of client-side auth state |
+| **Current User** | `GET /api/auth/me` | `{id, email, name, picture_url, role, gmail_connected, profile_complete}` — the only source of client-side auth state; `profile_complete` drives the frontend's onboarding gate (see Sender Identity below) |
 | **Logout** | `POST /api/auth/logout` | Clears the session cookie |
+| **Get Profile** | `GET /api/profile` | The caller's sender profile (name, intro, links, `experience_pool`, `company_links`, `has_resume`, `resume_filename`); 404 if they haven't created one yet |
+| **Save Profile** | `PUT /api/profile` | Creates or replaces the caller's profile fields — never the résumé bytes. 422s if any `experience_pool` bullet lacks the `"Label: achievement"` separator |
+| **Upload Résumé** | `POST /api/profile/resume` | Multipart PDF upload. Validates → stores the bytes → returns a **suggested** profile parsed by the LLM; nothing besides the résumé itself is saved until a follow-up `PUT /api/profile` |
+| **Download Résumé** | `GET /api/profile/resume` | Streams the caller's own stored PDF back; 404 if none stored |
+| **Delete Résumé** | `DELETE /api/profile/resume` | Clears the stored PDF, keeping the rest of the profile intact |
 
 **Every other route above now requires a session cookie**; `POST /api/pipeline/*`
 additionally requires `role = 'admin'` (`require_admin`).
@@ -121,6 +126,69 @@ written, and it is Fernet-encrypted before it touches the database.
 
 ---
 
+## 👤 Sender Identity (per-user)
+
+There is no more compiled-in identity. `sender_profile.PROFILE` and the
+committed `cold_email/resume.txt` / `resume.pdf` are gone; every user gets
+their own row in **`profiles`** (`user_id` PRIMARY KEY — one profile per
+user) holding `name`, `intro`, `linkedin`, `github`, `website`,
+`experience_pool` (JSONB list of `"Company: achievement"` bullets),
+`company_links` (JSONB dict, label → URL, for the bolded/linked name in the
+email), plus the résumé itself: `resume_pdf` (BYTEA), `resume_filename`,
+`resume_text`, `parsed_at`. `SenderProfile.from_row` builds the in-memory
+dataclass a worker actually uses from that row.
+
+- **Upload → parse → confirm, never upload → save.** `POST /api/profile/resume`
+  validates the bytes (`resume_store.validate_resume` — magic-byte check,
+  5MB cap; see below), stores them, extracts text with `pypdf`, then asks the
+  LLM for a **suggested** profile (`profile_extract.suggest_profile`). That
+  suggestion is returned to the caller and saved NOWHERE — the frontend shows
+  it in an editable form, and only a follow-up `PUT /api/profile` persists
+  anything the user confirmed. This is why a scanned/image PDF (extraction
+  fails, 422) or a bad LLM parse never corrupts a profile: the résumé bytes
+  are already safely stored by the time either can fail, and the user can
+  always fall back to filling the form in by hand.
+- **`resume_store.py` (`cold_email/resume_store.py`) is the entire read/write
+  surface for résumé bytes** — no other module touches `profiles.resume_pdf`
+  directly. Stored as `bytea` on the `profiles` row rather than in GCS: at
+  ~400KB/user the storage cost difference is negligible, and `bytea` wins
+  because **the profile row and the PDF commit in ONE transaction**. With GCS
+  the row and the blob are two separate systems, and a crash between the blob
+  write and the row commit leaves an orphan file in the bucket that nothing
+  ever reaps — reconciling that is a job someone owns forever. A single
+  Postgres transaction can't fail half-committed.
+  - Because `bytea` defaults to Postgres's `EXTENDED` TOAST strategy (compress
+    then out-of-line), and PDFs are already compressed, every write burns CPU
+    compressing bytes that don't get smaller. `resume_pdf` is set to `STORAGE
+    EXTERNAL` (out-of-line, uncompressed) instead — see `migrations/storage.sql`
+    and `scripts/apply_storage.py` in the deployment section below for how that
+    setting actually reaches a database `Base.metadata.create_all` provisioned.
+  - **The 5MB cap (`resume_store.MAX_RESUME_BYTES`) is not just an upload
+    nicety.** Cloud SQL disk grows automatically but **never shrinks** — an
+    unbounded upload path would permanently inflate the instance (and every
+    backup taken of it) the first time someone uploads an oversized PDF.
+- **Gmail credentials split app-level from user-level — do not conflate
+  them.** `gmail_client_id` / `gmail_client_secret` (`cold_email/config.py`,
+  set via env) identify the OAuth *application* to Google and stay app-level;
+  Google requires them to refresh **any** user's token, so there's exactly one
+  pair for the whole deployment. `refresh_token` and `sender_email` are
+  per-user: encrypted (Fernet) on the `users` row, resolved per-sweep by
+  `resolve_gmail_credentials` into a `GmailCredentials(refresh_token,
+  sender_email)` that's passed as an argument everywhere a Gmail call is made
+  (`workers/shared/gmail_client.py`), never read from settings. Moving all
+  four values onto the `users` table is the classic multi-tenant OAuth
+  mistake — nothing could then be refreshed. `resolve_gmail_credentials`
+  returns `None` (not an error) when Google omitted a refresh token for a
+  user who'd already consented before — the profile page's "Reconnect Gmail"
+  button re-runs the same consent flow (`prompt=consent` forces Google to
+  issue one again).
+- **Onboarding flow (frontend):** sign in with Google → land on `/onboarding`
+  if `profile_complete` is false → upload a résumé (optional — "Skip and fill
+  in manually" exists for a scanned PDF) → review/edit the extracted
+  suggestion → save, which is the first `PUT /api/profile`.
+
+---
+
 ## 📦 GCP Infrastructure Inventory
 
 | Resource | Service | Identifier / Connection | Specs |
@@ -151,10 +219,12 @@ written, and it is Fernet-encrypted before it touches the database.
    - Recoverable: `POST /api/pipeline/research` re-dispatches research for companies stuck in `found` (discovery only enqueues research for brand-new companies).
 
 3. **Drafting Sweep (`cold_email.workers.drafting.drafting_task`)**:
-   - Batch sweep: queries the `pending_drafts` database view for every `outreach` row currently `status = 'queued'` (joined to its company, contact, and research).
+   - Batch sweep: queries the `pending_drafts` database view for every `outreach` row currently `status = 'queued'` (joined to its company, contact, and research). Sweeps are single-user until Stack 3 makes drafting parametrized per user.
    - **Temporary bridge — delete in Stack 3.** Nothing creates `outreach` rows until Stack 3 ships the pool-selection UI (`POST /api/outreach`), so `bridge_queue_admin_outreach()` runs at the top of every sweep and queues an `outreach` row for the admin account over every `researched` company that doesn't already have one — replicating pre-split behaviour (the admin drafts everything researched) so the pipeline doesn't silently stop. **Stack 3 removes this function and its call site** once real user selection exists.
-   - **Template-driven, not freeform.** A fixed candidate-outreach template (`prompts/email_template.py`) owns structure/tone; the LLM (via `generate_json` with the `EmailDraftContext` schema) fills only the *contextual slots* — subject, a company-interest phrase, an admiration detail, and the 3 most-relevant experience bullets tailored per company from `sender_profile.PROFILE.experience_pool`. `assemble_email` fills the template (`fill_template` raises on any unfilled `{{token}}`) and renders HTML + a plain-text fallback (`helpers/html_builder.py`). A missing contact email or empty model output → `fail_outreach` (`ERR_NO_CONTACT_EMAIL` / `ERR_EMPTY_DRAFT`), terminal for that one row only — one bad row never aborts the sweep. Calls paced under the free-tier limit.
-   - Creates a **multipart** Gmail draft via `create_draft(to, subject, body, html=..., attachment_path=...)` (plain fallback + rich HTML with bold, a bullet list, clickable GitHub/LinkedIn links, and the résumé PDF attached) and saves `gmail_draft_id`.
+   - **Loads the sending user's identity ONCE per sweep, not per row.** `load_sender_context` reads the `profiles` row, résumé bytes, and Gmail credentials a single time before the per-row loop — a résumé's bytes cross the DB connection on every read, so doing this per row would pull the same ~400KB file out of Cloud SQL once per queued outreach row in the sweep. Two outcomes are preflight failures for the WHOLE sweep, not any one row, because neither is fixable by trying a different lead: no `profiles` row (or one missing `name`/`intro`) → aborts as `"no_profile"`; Gmail disconnected (`resolve_gmail_credentials` returns `None`) → aborts as `"gmail_disconnected"`. Either way the sweep returns early, **every queued row is left exactly at `status = 'queued'` and no dead-letter row is written** — completing the profile or reconnecting Gmail makes the very next Beat tick pick everything up with no manual DLQ retry. (A *missing résumé* is not one of these: it's not terminal, since the email body still renders from `intro` + `experience_pool` without an attachment.)
+   - No repo-relative `resume.pdf` is read anymore — the attachment (if any) comes back from `resume_store.get_resume_sync` as `(filename, bytes)` alongside the rest of that sweep's `SenderContext`.
+   - **Template-driven, not freeform.** A fixed candidate-outreach template (`prompts/email_template.py`) owns structure/tone; the LLM (via `generate_json` with the `EmailDraftContext` schema) fills only the *contextual slots* — subject, a company-interest phrase, an admiration detail, and the 3 most-relevant experience bullets tailored per company from that sweep's `SenderProfile.experience_pool`. `assemble_email` fills the template (`fill_template` raises on any unfilled `{{token}}`) and renders HTML + a plain-text fallback (`helpers/html_builder.py`). Per-row (not sweep-wide) failures — a missing contact email or empty model output — go through `fail_outreach` (`ERR_NO_CONTACT_EMAIL` / `ERR_EMPTY_DRAFT`), terminal for that one row only, so one bad row never aborts the rest of the sweep. Calls paced under the free-tier limit.
+   - Creates a **multipart** Gmail draft via `create_draft(creds, to, subject, body, html=..., attachment=(filename, bytes))` (plain fallback + rich HTML with bold, a bullet list, clickable GitHub/LinkedIn links, and the résumé PDF attached) using that sweep's per-user `GmailCredentials`, and saves `gmail_draft_id`.
    - Advances the outreach row to `status = 'drafted'` (held in review queue).
    - Scheduled via Celery Beat to sweep every 15 minutes.
 
@@ -249,15 +319,15 @@ HUNTER_API_KEY=...                   # Hunter.io Domain Search (contact-pool dis
 # Optional: MODEL_FALLBACK_CHAIN=["llama-3.3-70b-versatile","gemini-3.5-flash-lite"]
 # Optional: MODEL_NAME=gemini-flash-latest   (default single model when chain unset)
 
-# Gmail API — OAuth2 refresh-token flow (headless send from a single mailbox).
-# Mint these once with: uv run python scripts/gmail_auth.py --client-secret <client.json>
+# Gmail OAuth APPLICATION credentials — app-level, not per-user. Google
+# requires them to refresh ANY user's token, so there is exactly one pair for
+# the whole deployment. Per-user refresh tokens live encrypted on the `users`
+# table (gmail_refresh_token_enc), never here — see Sender Identity above.
 GMAIL_CLIENT_ID=...
 GMAIL_CLIENT_SECRET=...
-GMAIL_REFRESH_TOKEN=...
-GMAIL_SENDER_EMAIL=...
 
-# Sender identity is per-user data, not code — see the `profiles` table and
-# cold_email/sender_profile.py (SenderProfile.from_row).
+# Sender identity (name, intro, links, résumé, experience bullets) is
+# per-user data in the `profiles` table, not code — see Sender Identity above.
 
 # Auth (Google Sign-In + per-user sessions)
 SESSION_SECRET=...                   # HS256 signing key for the session JWT
@@ -308,7 +378,12 @@ runs `Base.metadata.create_all` (which creates the new `companies` /
 / `available_contacts` against whatever tables already exist) plus
 `scripts/apply_storage.py` (which sets `profiles.resume_pdf`'s TOAST storage
 strategy to `EXTERNAL` — another thing `Base.metadata.create_all` cannot
-express, same class of gap as the views). Skipping 006 is
+express, same class of gap as the views). Both run on **every boot**, not
+just the first, because the underlying DDL is idempotent (re-declaring a view
+or re-applying the same `STORAGE` strategy is a no-op). If a future stack
+needs another `create_all`-inexpressible column setting, append the new
+`.sql` file to `scripts/apply_storage.py`'s `SQL_FILES` tuple — don't invent a
+second script-plus-boot-hook for it. Skipping 006 is
 the DEFAULT outcome of a normal deploy, not an edge case, and it "succeeds"
 quietly:
 - `create_all` makes the new tables, empty. The old `leads` table and its data
