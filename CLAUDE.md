@@ -296,6 +296,52 @@ cd frontend && npm run dev
 ```
 
 ### Deploying Updates to Cloud Run:
+
+**PRE-DEPLOY (one-time, before the tenancy-model image ever ships to
+production): apply migration 006.** Nothing in the container or its startup
+path runs `migrations/006_multi_tenant_schema.sql` — `scripts/start.sh` only
+runs `Base.metadata.create_all` (which creates the new `companies` /
+`company_contacts` / `outreach` tables, but EMPTY, and provisions no data) and
+`scripts/apply_views.py` (which re-declares `pending_drafts` / `pending_sends`
+/ `available_contacts` against whatever tables already exist). Skipping 006 is
+the DEFAULT outcome of a normal deploy, not an edge case, and it "succeeds"
+quietly:
+- `create_all` makes the new tables, empty. The old `leads` table and its data
+  are untouched and never migrated.
+- The stale pre-migration views (if this is the first deploy off `leads`) or
+  the newly-declared post-migration views (if `views.sql` ran against an
+  un-migrated schema) survive either way.
+- `GET /api/health` only checks DB connectivity, so it still returns 200 —
+  Cloud Run's health check passes and cuts traffic over to the new revision.
+- The drafting sweep then raises
+  `TypeError: PendingDraft() got an unexpected keyword argument 'lead_id'`
+  (or the equivalent "relation does not exist" / missing-column error) every
+  15 minutes, and every lead/company sits stranded — nothing is ever drafted
+  or sent, with no user-visible error anywhere in the dashboard.
+
+Apply it by hand, before rolling out this stack's image, with
+`ON_ERROR_STOP=1` so a failing statement stops `psql` instead of continuing
+past it:
+```bash
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f migrations/006_multi_tenant_schema.sql
+```
+
+Before running it, check whether the migration's drafts-orphan guard (the
+`RAISE EXCEPTION ... refusing to delete draft bodies` check) would fire. A
+non-empty result means at least one `leads` row is sitting outside the
+statuses the `outreach` backfill maps directly, has a draft row attached (most
+often via the old regenerate-then-never-redrafted path,
+`POST /api/leads/{id}/regenerate`, which reset `status` to `'researched'` but
+left the draft in place) — the migration now backfills these into `outreach`
+at `status = 'drafted'` rather than aborting, but it's worth knowing what's
+about to move before running it against production:
+```sql
+SELECT l.status, count(*) FROM drafts d JOIN leads l ON l.id = d.lead_id
+WHERE l.status NOT IN ('drafted','approved','sent','rejected')
+  AND NOT (l.status='failed' AND l.founder_email IS NOT NULL)
+GROUP BY 1;
+```
+
 ```bash
 # 1. Build and push updated container to Artifact Registry
 gcloud builds submit --tag us-central1-docker.pkg.dev/cold-email-490016/cold-email-repo/cold-email-backend:latest .

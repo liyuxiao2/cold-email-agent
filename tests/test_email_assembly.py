@@ -33,6 +33,7 @@ def _row(founder_name="Kenny Chan"):
         founder_name=founder_name,
         contact_email="kenny@turo.com",
         contact_first_name=founder_name.split()[0] if founder_name else None,
+        contact_last_name=founder_name.split()[-1] if founder_name else None,
         contact_position="Founder",
         raw_content="",
         tech_stack="Go",
@@ -103,6 +104,7 @@ def test_greeting_uses_the_contact_not_the_founder(profile):
         founder_name="Ann Reed",  # the founder
         contact_email="bo@acme.com",
         contact_first_name="Bo",  # but we are emailing Bo
+        contact_last_name="Lin",
         contact_position="CTO",
         raw_content="raw",
         tech_stack=["python"],
@@ -135,6 +137,7 @@ def test_greeting_falls_back_when_the_contact_has_no_first_name(profile):
         founder_name=None,
         contact_email="team@acme.com",
         contact_first_name=None,
+        contact_last_name=None,
         contact_position="CTO",
         raw_content="raw",
         tech_stack=["python"],
@@ -149,6 +152,79 @@ def test_greeting_falls_back_when_the_contact_has_no_first_name(profile):
         "tailored_bullets": ["A: did a thing"],
     }
     assert "Hi there," in assemble_email(context, row, profile)["body"]
+
+
+def test_generate_email_addresses_the_llm_prompt_by_full_contact_name(monkeypatch):
+    """contact_last_name comes from the pending_drafts view (migrations/006 +
+    views.sql) and the PendingDraft DTO; generate_email's recipient_name
+    should use the CONTACT's full name for the LLM prompt when a last name is
+    on file, not just the first name."""
+    from cold_email.workers.drafting.helpers.generation import generate_email
+
+    captured = {}
+
+    def fake_generate_json(system, prompt, schema):
+        captured["prompt"] = prompt
+        return "{}"
+
+    monkeypatch.setattr(
+        "cold_email.workers.drafting.helpers.generation.generate_json", fake_generate_json
+    )
+
+    row = PendingDraft(
+        outreach_id="o1",
+        user_id="u1",
+        company_id="c1",
+        contact_id="ct1",
+        company_name="Acme",
+        company_url="https://acme.com",
+        founder_name="Ann Reed",
+        contact_email="bo@acme.com",
+        contact_first_name="Bo",
+        contact_last_name="Lin",
+        contact_position="CTO",
+        raw_content="raw",
+        tech_stack=["python"],
+        recent_news="news",
+        hook="hook",
+    )
+    generate_email(row)
+    assert "Bo Lin" in str(captured["prompt"])
+
+
+def test_generate_email_falls_back_to_first_name_only_without_a_last_name(monkeypatch):
+    from cold_email.workers.drafting.helpers.generation import generate_email
+
+    captured = {}
+
+    def fake_generate_json(system, prompt, schema):
+        captured["prompt"] = prompt
+        return "{}"
+
+    monkeypatch.setattr(
+        "cold_email.workers.drafting.helpers.generation.generate_json", fake_generate_json
+    )
+
+    row = PendingDraft(
+        outreach_id="o1",
+        user_id="u1",
+        company_id="c1",
+        contact_id="ct1",
+        company_name="Acme",
+        company_url="https://acme.com",
+        founder_name=None,
+        contact_email="bo@acme.com",
+        contact_first_name="Bo",
+        contact_last_name=None,
+        contact_position="CTO",
+        raw_content="raw",
+        tech_stack=["python"],
+        recent_news="news",
+        hook="hook",
+    )
+    generate_email(row)
+    assert "Bo" in str(captured["prompt"])
+    assert "Bo Lin" not in str(captured["prompt"])
 
 
 def test_recipient_title_constant_is_gone():

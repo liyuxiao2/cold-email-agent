@@ -182,7 +182,21 @@ async def legacy_fixture(legacy_session, admin_user_id):
           ('66666666-6666-6666-6666-666666666666', 'DraftFailCo','Eli Poe',   'eli@draftfail.co',
            'https://draftfail.co','failed'),
           ('77777777-7777-7777-7777-777777777777', 'OneWordCo',  'Prince',    'p@oneword.co',
-           'https://oneword.co',  'researched')
+           'https://oneword.co',  'researched'),
+          ('88888888-8888-8888-8888-888888888888', 'ApprovedCo', 'Gia Bell',  'gia@approved.co',
+           'https://approved.co', 'approved'),
+          ('99999999-9999-9999-9999-999999999999', 'RejectedCo', 'Hal Fox',   'hal@rejected.co',
+           'https://rejected.co', 'rejected')
+        """)
+    )
+    # RejectedCo's error_msg is a REVIEWER NOTE, not a failure message: the old
+    # reject handler (POST /api/leads/{id}/reject) wrote `lead.error_msg =
+    # payload.notes`. This is exactly the case the companies backfill must NOT
+    # carry forward — it's a private per-user note, not a global company fact.
+    await legacy_session.execute(
+        text("""
+        UPDATE leads SET error_msg = 'founder was rude on the call'
+        WHERE id = '99999999-9999-9999-9999-999999999999'
         """)
     )
     await legacy_session.execute(
@@ -325,6 +339,30 @@ async def test_research_status_mapping(legacy_fixture, legacy_session, company, 
         )
     ).scalar_one()
     assert status == expected
+
+
+@pytest.mark.asyncio
+async def test_reviewer_note_does_not_leak_into_the_global_company_row(
+    legacy_fixture, legacy_session
+):
+    """RejectedCo's leads.error_msg is a REVIEWER NOTE ('founder was rude on
+    the call'), not a failure message — the old reject handler wrote
+    lead.error_msg = payload.notes. Backfilling it onto companies.error_msg
+    would turn a private per-user note into a fact GET /api/companies serves
+    to every signup. The note belongs on outreach.error_msg (per-user) only."""
+    await _run_migration(legacy_session)
+    row = (
+        await legacy_session.execute(
+            text("""
+            SELECT c.error_msg AS company_error_msg, o.error_msg AS outreach_error_msg
+            FROM companies c
+            JOIN outreach o ON o.company_id = c.id
+            WHERE c.company_name = 'RejectedCo'
+            """)
+        )
+    ).one()
+    assert row.company_error_msg is None
+    assert row.outreach_error_msg == "founder was rude on the call"
 
 
 @pytest.mark.asyncio
@@ -475,18 +513,23 @@ async def test_legacy_table_retains_every_row(legacy_fixture, legacy_session):
     await _run_migration(legacy_session)
     assert (
         await legacy_session.execute(text("SELECT COUNT(*) FROM leads_legacy"))
-    ).scalar_one() == 7
+    ).scalar_one() == 9
 
 
 @pytest.mark.asyncio
-async def test_a_draft_with_no_outreach_row_aborts_instead_of_being_deleted(
+async def test_a_researched_lead_with_a_leftover_draft_gets_an_outreach_row_at_drafted(
     legacy_fixture, legacy_session
 ):
-    """Deleting an unmatchable draft would destroy a generated email body
-    forever — leads_legacy preserves the lead, but not the draft text. Stop and
-    make a human look instead."""
-    # ResearchCo never reached 'drafted', so it gets no outreach row; a draft
-    # hanging off it has nowhere to go.
+    """The old POST /api/leads/{id}/regenerate reset a lead's status to
+    'researched' but left its existing draft rows in place, so a 'researched'
+    lead can still own a draft on real production data. That draft must not be
+    silently dropped or trigger the orphan-draft abort: the outreach
+    backfill's `OR EXISTS (SELECT 1 FROM drafts ...)` clause pulls this lead in
+    regardless of its own status, and since 'researched' is not a valid
+    outreach.status, it maps to 'drafted' — the draft genuinely exists and
+    belongs in the review queue."""
+    # ResearchCo never reached 'drafted' by its own `leads.status`, but a draft
+    # hangs off it anyway — exactly the regenerate-then-never-redrafted case.
     await legacy_session.execute(
         text("""
         INSERT INTO drafts (lead_id, subject_line, body)
@@ -495,14 +538,21 @@ async def test_a_draft_with_no_outreach_row_aborts_instead_of_being_deleted(
     )
     await legacy_session.commit()
 
-    with pytest.raises(asyncpg.exceptions.RaiseError, match="refusing to delete draft bodies"):
-        await _run_migration(legacy_session)
+    await _run_migration(legacy_session)  # must NOT raise / abort
 
-    assert (
+    row = (
         await legacy_session.execute(
-            text("SELECT body FROM drafts WHERE subject_line = 'Hi ResearchCo'")
+            text("""
+            SELECT o.status, d.body
+            FROM outreach o
+            JOIN companies c ON c.id = o.company_id
+            JOIN drafts d   ON d.outreach_id = o.id
+            WHERE c.company_name = 'ResearchCo'
+            """)
         )
-    ).scalar_one() == "precious body"
+    ).one()
+    assert row.status == "drafted"
+    assert row.body == "precious body"
 
 
 @pytest_asyncio.fixture
@@ -546,6 +596,22 @@ async def test_refuses_a_schema_built_from_the_post_split_models(legacy_fixture,
 
 
 @pytest.mark.asyncio
+async def test_refuses_a_dead_letter_table_built_from_the_post_split_models(
+    legacy_fixture, legacy_session
+):
+    """The presence-only preflight check (to_regclass('dead_letter') IS NOT
+    NULL) is not enough: a dead_letter table built by create_all from the NEW
+    (post-1b) ORM model already has company_id/outreach_id and no lead_id at
+    all. Without a shape check it would sail past preflight and only die deep
+    in the backfill on a raw 'column dead_letter.lead_id does not exist'."""
+    await legacy_session.execute(text("ALTER TABLE dead_letter DROP COLUMN lead_id"))
+    await legacy_session.commit()
+
+    with pytest.raises(asyncpg.exceptions.RaiseError, match="already migrated"):
+        await _run_migration(legacy_session)
+
+
+@pytest.mark.asyncio
 async def test_adopts_tables_a_create_all_boot_already_made(legacy_fixture, legacy_session):
     """scripts/start.sh runs create_all on every boot, so the new tables can
     already exist (empty) by the time this migration runs. It must adopt them,
@@ -564,7 +630,7 @@ async def test_adopts_tables_a_create_all_boot_already_made(legacy_fixture, lega
 
     await _run_migration(legacy_session)
 
-    assert (await legacy_session.execute(text("SELECT COUNT(*) FROM companies"))).scalar_one() == 7
+    assert (await legacy_session.execute(text("SELECT COUNT(*) FROM companies"))).scalar_one() == 9
 
 
 @pytest.mark.asyncio

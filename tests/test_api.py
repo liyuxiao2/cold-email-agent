@@ -12,6 +12,7 @@ from cold_email.database import (
     RESEARCH_FOUND,
     Company,
     CompanyContact,
+    DeadLetter,
     Draft,
     Outreach,
     User,
@@ -274,3 +275,40 @@ async def test_draft_review_queue_returns_newest_draft(async_session, user_clien
     draft = response.json()[0]["draft"]
     assert draft["gmail_draft_id"] == "gmail-new"
     assert draft["body"] == "Hi Kenny, new template"
+
+
+@pytest.mark.asyncio
+async def test_dlq_hides_another_users_drafting_failure(
+    async_session, user_client, other_user_outreach
+):
+    """GET /api/dlq is the only DLQ route with no admin gate, so an
+    outreach-anchored (drafting/logistics) dead-letter row — one user's
+    problem — must not leak another user's outreach_id, company name, and
+    error_msg. A company-anchored (research) row is a global fact and must be
+    visible to both, modeled on the existing other_user_outreach pattern."""
+    other_drafting_failure = DeadLetter(
+        outreach_id=other_user_outreach.id,
+        task_name="drafting_task",
+        stage="drafting",
+        error_msg="other user's secret failure",
+    )
+    research_company = Company(company_name="ResearchFailCo", research_status="failed")
+    async_session.add_all([other_drafting_failure, research_company])
+    await async_session.commit()
+    research_failure = DeadLetter(
+        company_id=research_company.id,
+        task_name="research_task",
+        stage="research",
+        error_msg="no eligible contact",
+    )
+    async_session.add(research_failure)
+    await async_session.commit()
+
+    body = (await user_client.get("/api/dlq")).json()
+
+    stages = {item["stage"] for item in body["items"]}
+    assert "drafting" not in stages
+    assert "research" in stages
+    assert body["count"] == len(body["items"])
+    for item in body["items"]:
+        assert item["error_msg"] != "other user's secret failure"
