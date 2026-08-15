@@ -699,3 +699,134 @@ def captured_drafts(monkeypatch):
 
     monkeypatch.setattr("cold_email.workers.drafting.drafting.create_draft", fake_create_draft)
     return calls
+
+
+@pytest_asyncio.fixture
+async def approved_outreach_factory(async_session, admin_user_id, pending_views):
+    """A factory creating one 'approved' outreach row per call: a distinct
+    company (UNIQUE(user_id, company_id) forbids reusing one company for the
+    same user) with an eligible contact, a draft carrying a gmail_draft_id,
+    and Gmail credentials on the admin (the owner) -- the minimal input the
+    due-send scanner and logistics_task need.
+
+    Starts 'approved', not 'sending': the scanner tests exercise
+    claim_due_sends flipping it to 'sending' themselves.
+    """
+    import itertools
+
+    from cold_email.auth.crypto import encrypt
+    from cold_email.database import (
+        OUTREACH_APPROVED,
+        RESEARCH_RESEARCHED,
+        Company,
+        CompanyContact,
+        Draft,
+        Outreach,
+        User,
+    )
+
+    counter = itertools.count()
+
+    user = await async_session.get(User, admin_user_id)
+    if not user.gmail_refresh_token_enc:
+        user.gmail_refresh_token_enc = encrypt("rt-admin")
+        user.gmail_sender_email = "admin@example.com"
+        await async_session.commit()
+
+    async def _factory(scheduled_send_at=None):
+        n = next(counter)
+        company = Company(company_name=f"SendCo{n}", research_status=RESEARCH_RESEARCHED)
+        async_session.add(company)
+        await async_session.commit()
+
+        contact = CompanyContact(
+            company_id=company.id, email=f"contact{n}@sendco.com", eligible=True, confidence=90
+        )
+        async_session.add(contact)
+        await async_session.commit()
+
+        outreach = Outreach(
+            user_id=admin_user_id,
+            company_id=company.id,
+            contact_id=contact.id,
+            status=OUTREACH_APPROVED,
+            scheduled_send_at=scheduled_send_at,
+        )
+        async_session.add(outreach)
+        await async_session.commit()
+
+        async_session.add(
+            Draft(
+                outreach_id=outreach.id,
+                subject_line=f"Hi SendCo{n}",
+                body="body",
+                gmail_draft_id=f"gd-{n}",
+            )
+        )
+        await async_session.commit()
+        return outreach
+
+    return _factory
+
+
+@pytest_asyncio.fixture
+async def two_users_approved(async_session, pending_views):
+    """Two distinct users, each owning one outreach row already claimed
+    'sending' (draft + Gmail credentials included), for asserting that
+    logistics_task always sends from the OUTREACH ROW'S OWNER's mailbox --
+    never a global sender or whoever happens to be calling.
+
+    Pre-claimed 'sending' (not 'approved'): the only consumer of this fixture
+    calls logistics_task directly, bypassing send_due_task's own claim.
+    """
+    from cold_email.auth.crypto import encrypt
+    from cold_email.database import (
+        OUTREACH_SENDING,
+        RESEARCH_RESEARCHED,
+        ROLE_USER,
+        Company,
+        CompanyContact,
+        Draft,
+        Outreach,
+        User,
+    )
+
+    user_a = User(email="a@example.com", google_sub="sub-a-send", role=ROLE_USER)
+    user_b = User(email="b@example.com", google_sub="sub-b-send", role=ROLE_USER)
+    user_a.gmail_refresh_token_enc = encrypt("rt-a")
+    user_a.gmail_sender_email = "a@example.com"
+    user_b.gmail_refresh_token_enc = encrypt("rt-b")
+    user_b.gmail_sender_email = "b@example.com"
+    async_session.add_all([user_a, user_b])
+    await async_session.commit()
+
+    async def _make(user, name, email):
+        company = Company(company_name=name, research_status=RESEARCH_RESEARCHED)
+        async_session.add(company)
+        await async_session.commit()
+        contact = CompanyContact(company_id=company.id, email=email, eligible=True, confidence=90)
+        async_session.add(contact)
+        await async_session.commit()
+        outreach = Outreach(
+            user_id=user.id,
+            company_id=company.id,
+            contact_id=contact.id,
+            status=OUTREACH_SENDING,
+        )
+        async_session.add(outreach)
+        await async_session.commit()
+        async_session.add(
+            Draft(
+                outreach_id=outreach.id,
+                subject_line=f"Hi {name}",
+                body="body",
+                gmail_draft_id=f"gd-{name}",
+            )
+        )
+        await async_session.commit()
+        return outreach
+
+    outreach_a = await _make(user_a, "CoA", "contact-a@co.com")
+    outreach_b = await _make(user_b, "CoB", "contact-b@co.com")
+
+    return {"outreach_a": outreach_a, "outreach_b": outreach_b}

@@ -1,9 +1,9 @@
 """Logistics worker package."""
 
-from cold_email.workers.logistics.helpers.db_helpers import fetch_send_inputs
-from cold_email.workers.logistics.logistics import logistics_task
+from cold_email.workers.logistics.logistics import logistics_task, reap_stuck_sends, send_due_task
 
 __all__ = [
     "logistics_task",
-    "fetch_send_inputs",
+    "send_due_task",
+    "reap_stuck_sends",
 ]
