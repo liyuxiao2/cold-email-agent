@@ -256,7 +256,8 @@ GMAIL_CLIENT_SECRET=...
 GMAIL_REFRESH_TOKEN=...
 GMAIL_SENDER_EMAIL=...
 
-# Sender identity is code, not config — see cold_email/sender_profile.py (PROFILE).
+# Sender identity is per-user data, not code — see the `profiles` table and
+# cold_email/sender_profile.py (SenderProfile.from_row).
 
 # Auth (Google Sign-In + per-user sessions)
 SESSION_SECRET=...                   # HS256 signing key for the session JWT

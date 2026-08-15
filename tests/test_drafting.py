@@ -71,8 +71,11 @@ def test_drafting_sweep_happy_path():
     assert kwargs["subject"] == "Hi"
     assert kwargs["body"] == "A specific, short note."
     assert kwargs["html"] == "<p>A specific, short note.</p>"
-    assert "attachment_path" in kwargs
-    assert kwargs["attachment_path"].endswith("cold_email/resume.pdf")
+    # cold_email/resume.pdf no longer exists (Stack 2 moves résumés into the
+    # per-user profiles table); the repo-relative lookup degrades gracefully to
+    # no attachment rather than breaking. A later task in this stack replaces
+    # this lookup with the per-user résumé from resume_store.
+    assert kwargs["attachment_path"] is None
     mock_commit.assert_called_once()
     mock_status.assert_called_once_with(OUTREACH_A, OUTREACH_DRAFTED)
 

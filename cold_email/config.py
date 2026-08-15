@@ -27,8 +27,8 @@ class Settings(BaseSettings):
     gmail_refresh_token: str = ""
     gmail_sender_email: str = ""
 
-    # Sender identity lives in cold_email.sender_profile.PROFILE (the drafting
-    # template reads it from there), not here.
+    # Sender identity is per-user, in the `profiles` table (see
+    # cold_email.database.Profile / SenderProfile.from_row), not here.
 
     discovery_leads_per_run: int = 20
 

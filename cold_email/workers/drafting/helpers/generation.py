@@ -14,7 +14,7 @@ from cold_email.prompts.email_draft import (
     build_email_draft_messages,
 )
 from cold_email.prompts.email_template import TEMPLATE, fill_template
-from cold_email.sender_profile import PROFILE, SenderProfile
+from cold_email.sender_profile import SenderProfile
 from cold_email.workers.drafting.helpers.html_builder import (
     markdown_to_html,
     plain_text_fallback,
@@ -29,15 +29,15 @@ logger = logging.getLogger(__name__)
 _REQUIRED = ("subject", "company_interest", "admiration_detail", "intro", "tailored_bullets")
 
 
-def draft_email(row: PendingDraft) -> dict:
+def draft_email(row: PendingDraft, profile: SenderProfile) -> dict:
     """Produce a {subject, body, body_html} draft for a lead ({} if unusable)."""
-    context = parse_email_response(generate_email(row))
+    context = parse_email_response(generate_email(row, profile))
     if not context:
         return {}
-    return assemble_email(context, row, PROFILE)
+    return assemble_email(context, row, profile)
 
 
-def generate_email(row: PendingDraft) -> str:
+def generate_email(row: PendingDraft, profile: SenderProfile) -> str:
     """Ask the LLM for the contextual slots; returns raw JSON text.
 
     Provider/model fallback is handled inside generate_json.
@@ -54,7 +54,7 @@ def generate_email(row: PendingDraft) -> str:
         tech_stack=tech_stack,
         recent_news=row.recent_news or "",
         hook=row.hook or "",
-        resume_text=PROFILE.effective_resume_text,
+        resume_text=profile.effective_resume_text,
     )
     return generate_json(system=EMAIL_DRAFT_SYSTEM, prompt=messages, schema=EmailDraftContext)
 
