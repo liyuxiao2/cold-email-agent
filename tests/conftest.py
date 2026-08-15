@@ -589,6 +589,24 @@ async def targeted_by_user_company(async_session, user_client, pending_views):
     return company
 
 
+@pytest_asyncio.fixture
+async def set_quota(async_session, user_client):
+    """Set `monthly_draft_quota` on `user_client`'s own account."""
+    from sqlalchemy import select
+
+    from cold_email.database import User
+
+    async def _set(n: int):
+        user = (
+            await async_session.execute(select(User).where(User.email == "user@example.com"))
+        ).scalar_one()
+        user.monthly_draft_quota = n
+        await async_session.commit()
+        return user
+
+    return _set
+
+
 @pytest.fixture
 def captured_drafts(monkeypatch):
     """Record create_draft's kwargs (and the creds it was called with) instead
