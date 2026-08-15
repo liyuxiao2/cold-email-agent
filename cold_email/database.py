@@ -2,6 +2,8 @@ import contextlib
 import uuid
 
 from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
     Column,
     DateTime,
     ForeignKey,
@@ -9,6 +11,7 @@ from sqlalchemy import (
     LargeBinary,
     String,
     Text,
+    UniqueConstraint,
     create_engine,
     func,
 )
@@ -54,45 +57,129 @@ class User(Base):
         return self.role == ROLE_ADMIN
 
 
-class Lead(Base):
-    __tablename__ = "leads"
+# Global research lifecycle — a fact about a company, true for every user.
+RESEARCH_FOUND = "found"
+RESEARCH_RESEARCHED = "researched"
+RESEARCH_FAILED = "failed"
+
+# Per-user outreach lifecycle. 'sending' is added in Stack 4.
+OUTREACH_QUEUED = "queued"
+OUTREACH_DRAFTED = "drafted"
+OUTREACH_APPROVED = "approved"
+OUTREACH_SENT = "sent"
+OUTREACH_REJECTED = "rejected"
+OUTREACH_FAILED = "failed"
+
+
+class Company(Base):
+    """A company in the global pool: discovered and researched once, reused by
+    every user. Holds only facts true for everyone — no per-user state.
+    """
+
+    __tablename__ = "companies"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     company_name = Column(String, nullable=False, index=True)
-    founder_name = Column(String)
-    founder_email = Column(String)
-    linkedin_url = Column(String)
     company_url = Column(String)
+    linkedin_url = Column(String)
+    founder_name = Column(String)
     funding_stage = Column(String)
     headcount = Column(Integer)
-    status = Column(String, nullable=False, default="found")
+    industry = Column(String)
+    research_status = Column(String, nullable=False, default=RESEARCH_FOUND, index=True)
     error_msg = Column(Text)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
-    research = relationship("Research", back_populates="lead", cascade="all, delete-orphan")
-    drafts = relationship("Draft", back_populates="lead", cascade="all, delete-orphan")
+    research = relationship("Research", back_populates="company", cascade="all, delete-orphan")
+    contacts = relationship(
+        "CompanyContact", back_populates="company", cascade="all, delete-orphan"
+    )
+    outreach = relationship("Outreach", back_populates="company", cascade="all, delete-orphan")
+
+
+class CompanyContact(Base):
+    """One emailable person at a company, from Hunter Domain Search.
+
+    A pool rather than a single founder_email: a shared company pool would
+    otherwise mean every user emails the same person.
+
+    Ineligible contacts are stored too, so loosening the position filter later
+    can re-classify stored rows instead of re-spending Hunter credits.
+    """
+
+    __tablename__ = "company_contacts"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    company_id = Column(
+        UUID(as_uuid=True), ForeignKey("companies.id", ondelete="CASCADE"), nullable=False
+    )
+    email = Column(String, nullable=False)
+    first_name = Column(String)
+    last_name = Column(String)
+    position = Column(String)
+    seniority = Column(String)
+    department = Column(String)
+    confidence = Column(Integer, nullable=False, default=0)  # Hunter 0-100
+    is_founder = Column(Boolean, nullable=False, default=False)
+    eligible = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    company = relationship("Company", back_populates="contacts")
+
+    __table_args__ = (UniqueConstraint("company_id", "email", name="uq_contact_company_email"),)
+
+
+class Outreach(Base):
+    """One user's attempt to reach one company — the per-user half of the split.
+
+    UNIQUE(user_id, company_id): a user targets a company at most once. Two
+    different users targeting the same company is expected and fine.
+    """
+
+    __tablename__ = "outreach"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    company_id = Column(
+        UUID(as_uuid=True), ForeignKey("companies.id", ondelete="CASCADE"), nullable=False
+    )
+    # SET NULL, not CASCADE — see the model docstring in CompanyContact.
+    contact_id = Column(UUID(as_uuid=True), ForeignKey("company_contacts.id", ondelete="SET NULL"))
+    status = Column(String, nullable=False, default=OUTREACH_QUEUED, index=True)
+    scheduled_send_at = Column(DateTime(timezone=True))  # NULL = send immediately
+    error_msg = Column(Text)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    company = relationship("Company", back_populates="outreach")
+    contact = relationship("CompanyContact")
+    drafts = relationship("Draft", back_populates="outreach", cascade="all, delete-orphan")
+
+    __table_args__ = (UniqueConstraint("user_id", "company_id", name="uq_outreach_user_company"),)
 
 
 class Research(Base):
     __tablename__ = "research"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    lead_id = Column(UUID(as_uuid=True), ForeignKey("leads.id", ondelete="CASCADE"))
+    company_id = Column(UUID(as_uuid=True), ForeignKey("companies.id", ondelete="CASCADE"))
     tech_stack = Column(JSONB)
     recent_news = Column(Text)
     hook = Column(Text)
     raw_content = Column(Text)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
-    lead = relationship("Lead", back_populates="research")
+    company = relationship("Company", back_populates="research")
 
 
 class Draft(Base):
     __tablename__ = "drafts"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    lead_id = Column(UUID(as_uuid=True), ForeignKey("leads.id", ondelete="CASCADE"))
+    outreach_id = Column(
+        UUID(as_uuid=True), ForeignKey("outreach.id", ondelete="CASCADE"), nullable=False
+    )
     subject_line = Column(String, nullable=False)
     body = Column(Text, nullable=False)
     version = Column(Integer, default=1)
@@ -100,27 +187,39 @@ class Draft(Base):
     gmail_draft_id = Column(String)  # Gmail's draft resource ID, for later send/delete
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
-    lead = relationship("Lead", back_populates="drafts")
+    outreach = relationship("Outreach", back_populates="drafts")
 
 
 class DeadLetter(Base):
-    """Dead-letter queue: one row per task that terminally failed.
+    """One row per terminally-failed task.
 
     Written by handle_terminal_failure (the single failure choke point) so every
-    permanently-failed lead lands here with enough context to be re-dispatched.
+    permanent failure lands here with enough context to be re-dispatched.
     `stage` maps the row back to the worker that should retry it.
+
+    Two nullable FKs with a CHECK that one is set. Research failures are
+    company-level (nobody can email them); drafting/send failures are
+    outreach-level (one user's problem). Collapsing both into one FK would lose
+    that distinction.
     """
 
     __tablename__ = "dead_letter"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    lead_id = Column(UUID(as_uuid=True), ForeignKey("leads.id", ondelete="CASCADE"))
+    company_id = Column(UUID(as_uuid=True), ForeignKey("companies.id", ondelete="CASCADE"))
+    outreach_id = Column(UUID(as_uuid=True), ForeignKey("outreach.id", ondelete="CASCADE"))
     task_name = Column(String, nullable=False)
     stage = Column(String, nullable=False)  # research | drafting | logistics
     error_msg = Column(Text)
     retry_count = Column(Integer, nullable=False, default=0)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     last_retried_at = Column(DateTime(timezone=True))
+
+    __table_args__ = (
+        CheckConstraint(
+            "company_id IS NOT NULL OR outreach_id IS NOT NULL", name="dead_letter_one_level"
+        ),
+    )
 
 
 # Async engine — FastAPI uses this
