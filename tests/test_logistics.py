@@ -1,149 +1,25 @@
-from unittest.mock import patch
-
 import pytest
 
-from cold_email.database import OUTREACH_SENT
+from cold_email.database import OUTREACH_SENDING, OUTREACH_SENT
 from cold_email.workers.logistics.logistics import logistics_task
-from cold_email.workers.shared.gmail_client import GmailCredentials
-from cold_email.workers.shared.views import PendingSend
 
 OUTREACH_ID = "00000000-0000-0000-0000-000000000000"
-FAKE_CREDS = GmailCredentials(
-    refresh_token="rt-owner",  # noqa: S106 (test fixture, not a real credential)
-    sender_email="owner@example.com",
-)
-
-
-def test_logistics_skips_when_not_pending():
-    """An outreach row absent from pending_sends because it isn't approved
-    (queued/drafted/sent/rejected) is a no-op."""
-    with (
-        patch("cold_email.workers.logistics.logistics.fetch_send_inputs", return_value=None),
-        patch(
-            "cold_email.workers.logistics.logistics.fetch_outreach_status",
-            return_value="drafted",
-        ),
-        patch("cold_email.workers.logistics.logistics.send_draft") as mock_send,
-        patch("cold_email.workers.logistics.logistics.update_outreach_status") as mock_status,
-    ):
-        result = logistics_task(OUTREACH_ID)
-
-    assert result == {"status": "skipped", "reason": "outreach not pending send"}
-    mock_send.assert_not_called()
-    mock_status.assert_not_called()
-
-
-def test_logistics_sends_existing_draft():
-    """An approved outreach row with a gmail_draft_id gets sent — from the
-    OWNING user's mailbox — and advanced to 'sent'."""
-    with (
-        patch(
-            "cold_email.workers.logistics.logistics.fetch_send_inputs",
-            return_value=PendingSend(
-                outreach_id=OUTREACH_ID,
-                user_id="00000000-0000-0000-0000-000000000001",
-                contact_email="contact@acme.com",
-                gmail_draft_id="gmail-123",
-                subject_line="Hi",
-                body="Body",
-            ),
-        ),
-        patch(
-            "cold_email.workers.logistics.logistics.fetch_owning_user",
-            return_value=object(),
-        ) as mock_owner,
-        patch(
-            "cold_email.workers.logistics.logistics.resolve_gmail_credentials",
-            return_value=FAKE_CREDS,
-        ),
-        patch(
-            "cold_email.workers.logistics.logistics.send_draft", return_value="msg-1"
-        ) as mock_send,
-        patch("cold_email.workers.logistics.logistics.update_outreach_status") as mock_status,
-    ):
-        result = logistics_task(OUTREACH_ID)
-
-    assert result == {"status": "success"}
-    mock_owner.assert_called_once_with("00000000-0000-0000-0000-000000000001")
-    mock_send.assert_called_once_with(FAKE_CREDS, "gmail-123")
-    mock_status.assert_called_once_with(OUTREACH_ID, OUTREACH_SENT)
-
-
-def test_logistics_fails_when_owning_user_has_no_gmail_connected():
-    """The owning user's credentials are absent (never connected, or revoked)
-    -> terminal failure, dead-lettered, no send attempted. Never falls back to
-    a global mailbox or the caller's own credentials."""
-    with (
-        patch(
-            "cold_email.workers.logistics.logistics.fetch_send_inputs",
-            return_value=PendingSend(
-                outreach_id=OUTREACH_ID,
-                user_id="00000000-0000-0000-0000-000000000001",
-                contact_email="contact@acme.com",
-                gmail_draft_id="gmail-123",
-                subject_line="Hi",
-                body="Body",
-            ),
-        ),
-        patch("cold_email.workers.logistics.logistics.fetch_owning_user", return_value=object()),
-        patch(
-            "cold_email.workers.logistics.logistics.resolve_gmail_credentials",
-            return_value=None,
-        ),
-        patch("cold_email.workers.logistics.logistics.send_draft") as mock_send,
-        patch("cold_email.workers.logistics.logistics.fail_outreach") as mock_fail,
-    ):
-        result = logistics_task(OUTREACH_ID)
-
-    from cold_email.workers.logistics.constants import ERR_GMAIL_DISCONNECTED
-
-    assert result == {"status": "failed", "error": ERR_GMAIL_DISCONNECTED}
-    mock_send.assert_not_called()
-    assert mock_fail.call_args.args == (OUTREACH_ID, ERR_GMAIL_DISCONNECTED)
-    assert mock_fail.call_args.kwargs["stage"] == "logistics"
-
-
-def test_logistics_fails_without_gmail_draft_id():
-    """Approved but no gmail_draft_id -> terminal failure, no send attempted."""
-    with (
-        patch(
-            "cold_email.workers.logistics.logistics.fetch_send_inputs",
-            return_value=PendingSend(
-                outreach_id=OUTREACH_ID,
-                user_id="00000000-0000-0000-0000-000000000001",
-                contact_email="contact@acme.com",
-                gmail_draft_id=None,
-                subject_line="Hi",
-                body="Body",
-            ),
-        ),
-        patch("cold_email.workers.logistics.logistics.send_draft") as mock_send,
-        patch("cold_email.workers.logistics.logistics.fail_outreach") as mock_fail,
-    ):
-        result = logistics_task(OUTREACH_ID)
-
-    assert result["status"] == "failed"
-    mock_send.assert_not_called()
-    # fail_outreach requires keyword-only stage/task_name — assert they are
-    # passed so the real (unmocked) call can't raise TypeError in production.
-    assert mock_fail.call_args.args[0] == OUTREACH_ID
-    assert mock_fail.call_args.kwargs["stage"] == "logistics"
-    assert mock_fail.call_args.kwargs["task_name"] == (
-        "cold_email.workers.logistics.logistics_task"
-    )
 
 
 @pytest.mark.asyncio
-async def test_no_draft_to_send_fails_the_outreach_row(
+async def test_logistics_skips_when_outreach_not_found(async_session, sync_session_for):
+    """Nothing to send, and nothing to fail -- the row simply doesn't exist."""
+    result = logistics_task(OUTREACH_ID)
+    assert result == {"status": "skipped", "reason": "not_found"}
+
+
+@pytest.mark.asyncio
+async def test_logistics_skips_when_not_claimed(
     async_session, admin_user_id, sync_session_for, pending_views
 ):
-    from cold_email.database import (
-        OUTREACH_APPROVED,
-        OUTREACH_FAILED,
-        Company,
-        DeadLetter,
-        Outreach,
-    )
+    """A row still 'approved' (not yet claimed 'sending' by send_due_task) is a
+    no-op -- the second guard against a duplicate Celery delivery."""
+    from cold_email.database import OUTREACH_APPROVED, Company, Outreach
 
     company = Company(company_name="Acme")
     async_session.add(company)
@@ -152,14 +28,102 @@ async def test_no_draft_to_send_fails_the_outreach_row(
     async_session.add(outreach)
     await async_session.commit()
 
+    result = logistics_task(str(outreach.id))
+    assert result == {"status": "skipped", "reason": "not_claimed"}
+
+
+@pytest.mark.asyncio
+async def test_no_draft_to_send_fails_the_outreach_row(
+    async_session, admin_user_id, sync_session_for, pending_views
+):
+    """Approved and claimed but no draft to send -- an anomaly, not a no-op."""
+    from sqlalchemy import select
+
+    from cold_email.database import OUTREACH_FAILED, Company, DeadLetter, Outreach
+
+    company = Company(company_name="Acme")
+    async_session.add(company)
+    await async_session.commit()
+    outreach = Outreach(user_id=admin_user_id, company_id=company.id, status=OUTREACH_SENDING)
+    async_session.add(outreach)
+    await async_session.commit()
+
     logistics_task(str(outreach.id))
 
     await async_session.refresh(outreach)
     assert outreach.status == OUTREACH_FAILED
 
-    from sqlalchemy import select
-
     dl = (await async_session.execute(select(DeadLetter))).scalar_one()
     assert dl.outreach_id == outreach.id
     assert dl.company_id is None
     assert dl.stage == "logistics"
+
+
+@pytest.mark.asyncio
+async def test_logistics_fails_when_owning_user_has_no_gmail_connected(
+    async_session, admin_user_id, sync_session_for, pending_views, monkeypatch
+):
+    """The owning user's credentials are absent (never connected, or revoked)
+    -> terminal failure, dead-lettered, no send attempted. Never falls back to
+    a global mailbox or the caller's own credentials."""
+    from sqlalchemy import select
+
+    from cold_email.database import Company, CompanyContact, DeadLetter, Draft, Outreach
+    from cold_email.workers.logistics.constants import ERR_GMAIL_DISCONNECTED
+
+    company = Company(company_name="Acme")
+    async_session.add(company)
+    await async_session.commit()
+    contact = CompanyContact(company_id=company.id, email="c@acme.com", eligible=True)
+    async_session.add(contact)
+    await async_session.commit()
+    outreach = Outreach(
+        user_id=admin_user_id,
+        company_id=company.id,
+        contact_id=contact.id,
+        status=OUTREACH_SENDING,
+    )
+    async_session.add(outreach)
+    await async_session.commit()
+    async_session.add(
+        Draft(outreach_id=outreach.id, subject_line="Hi", body="Body", gmail_draft_id="gd-1")
+    )
+    await async_session.commit()
+
+    def must_not_send(creds, draft_id):
+        raise AssertionError("send_draft must not be called without credentials")
+
+    monkeypatch.setattr("cold_email.workers.logistics.logistics.send_draft", must_not_send)
+
+    result = logistics_task(str(outreach.id))
+
+    assert result == {"status": "failed", "error": ERR_GMAIL_DISCONNECTED}
+    dl = (await async_session.execute(select(DeadLetter))).scalar_one()
+    assert dl.error_msg == ERR_GMAIL_DISCONNECTED
+    assert dl.stage == "logistics"
+
+
+@pytest.mark.asyncio
+async def test_logistics_sends_existing_draft_and_advances_to_sent(
+    async_session, approved_outreach_factory, sync_session_for, monkeypatch
+):
+    """The happy path: a claimed row with a draft and owner credentials gets
+    sent from the OWNING user's mailbox and advances to 'sent'."""
+    outreach = await approved_outreach_factory(scheduled_send_at=None)
+    outreach.status = OUTREACH_SENDING
+    await async_session.commit()
+
+    sent = []
+    monkeypatch.setattr(
+        "cold_email.workers.logistics.logistics.send_draft",
+        lambda creds, draft_id: sent.append((creds.sender_email, draft_id)) or "msg-1",
+    )
+
+    result = logistics_task(str(outreach.id))
+
+    assert result == {"status": "success", "message_id": "msg-1"}
+    assert len(sent) == 1
+    assert sent[0][0] == "admin@example.com"
+
+    await async_session.refresh(outreach)
+    assert outreach.status == OUTREACH_SENT
