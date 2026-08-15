@@ -1,3 +1,11 @@
+> **Superseded.** This document describes the original single-tenant system,
+> where one person's identity was compiled into the codebase and every lead
+> implicitly belonged to them. It is kept as a dated record of the original
+> design and is deliberately **not** updated.
+>
+> For the current multi-tenant architecture see
+> [the multi-tenant revamp overview](../specs/2026-08-14-multi-tenant-revamp-overview-design.md).
+
 # Cold Email Agent — Design Spec
 _Date: 2026-04-18_
 
