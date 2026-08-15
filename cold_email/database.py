@@ -60,6 +60,8 @@ class User(Base):
     # otherwise a raw SQL INSERT that never goes through the ORM's `default`
     # would violate NOT NULL on a create_all-provisioned table.
     monthly_draft_quota = Column(Integer, nullable=False, default=100, server_default=text("100"))
+    # NULL = send immediately on approve. See cold_email/cadence.py.
+    send_cadence = Column(JSONB)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -123,6 +125,23 @@ OUTREACH_QUEUED = "queued"
 OUTREACH_DRAFTING = "drafting"
 OUTREACH_DRAFTED = "drafted"
 OUTREACH_APPROVED = "approved"
+# A transient CLAIM, not a user-facing lifecycle stage — the send-side twin of
+# OUTREACH_DRAFTING. send_due_task moves a row here atomically (UPDATE ...
+# WHERE status = 'approved' ... RETURNING) right before dispatching
+# logistics_task, so two overlapping scans (or Celery redelivering the same
+# dispatch) cannot both send it: Celery guarantees at-least-once TASK
+# delivery, so a scanner over rows that only leave the set on success would
+# eventually dispatch one twice, and a cold email sent twice to a founder
+# cannot be undone.
+#
+# Unlike a stale 'drafting' claim, a stale 'sending' claim is NEVER
+# auto-reclaimed back to 'approved': no Gmail draft exists yet when a row is
+# claimed for drafting, but a 'sending' claim means send_draft may already
+# have been called, so retrying is exactly how a duplicate send happens. A
+# row stuck here past STUCK_SENDING_MINUTES is dead-lettered by
+# reap_stuck_sends for a human to verify the mailbox before retrying — never
+# requeued automatically.
+OUTREACH_SENDING = "sending"
 OUTREACH_SENT = "sent"
 OUTREACH_REJECTED = "rejected"
 OUTREACH_FAILED = "failed"
@@ -217,7 +236,18 @@ class Outreach(Base):
     )
     # SET NULL, not CASCADE — see the model docstring in CompanyContact.
     contact_id = Column(UUID(as_uuid=True), ForeignKey("company_contacts.id", ondelete="SET NULL"))
-    status = Column(String, nullable=False, default=OUTREACH_QUEUED)
+    # Text, not String: migration 006 provisions this column as TEXT, and the
+    # new partial indexes below compare it to a literal in their WHERE clause
+    # (`status = 'approved'`). Postgres renders that comparison differently
+    # for a TEXT column (no cast) than an unbounded VARCHAR one (an implicit
+    # `(status)::text` cast survives in the index definition), so a
+    # create_all-provisioned VARCHAR column would produce a byte-different
+    # outreach_due_idx / outreach_sending_idx than the migration's TEXT
+    # column — exactly what
+    # test_create_all_and_the_migration_agree_on_indexes_and_constraints
+    # exists to catch. Both are unbounded and identical in storage; only the
+    # declared type differed.
+    status = Column(Text, nullable=False, default=OUTREACH_QUEUED)
     scheduled_send_at = Column(DateTime(timezone=True))  # NULL = send immediately
     error_msg = Column(Text)
     # How many times drafting_recovery_task has reclaimed this row from a
@@ -240,6 +270,18 @@ class Outreach(Base):
         Index("outreach_user_status_idx", "user_id", "status"),
         # For Stack 3's per-contact cap query: COUNT(*) WHERE contact_id = ?
         Index("outreach_contact_idx", "contact_id"),
+        # Partial: the due-send scanner runs every 5 minutes forever, and
+        # 'sent' rows will eventually dominate the table. Indexing every
+        # status would grow this index without bound while only a sliver is
+        # ever read. Also defined in migrations/010_send_cadence.sql (applied
+        # via scripts/apply_storage.py) since create_all never ALTERs a table
+        # that already exists in production — both copies must match so a
+        # fresh test database (create_all) and production (migration) agree.
+        Index(
+            "outreach_due_idx", "scheduled_send_at", postgresql_where=text("status = 'approved'")
+        ),
+        # Rows reap_stuck_sends dead-letters once stale — see OUTREACH_SENDING.
+        Index("outreach_sending_idx", "updated_at", postgresql_where=text("status = 'sending'")),
     )
 
 

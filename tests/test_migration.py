@@ -34,10 +34,18 @@ MIGRATION = MIGRATIONS_DIR / "006_multi_tenant_schema.sql"
 # R43: 008 adds llm_api_key_enc / llm_provider / monthly_draft_quota to `users`
 # via idempotent ALTER TABLE ... ADD COLUMN IF NOT EXISTS, so it applies
 # cleanly on top of the legacy schema's pre-existing `users` table (005).
+# 010 adds users.send_cadence plus two partial indexes on `outreach`
+# (outreach_due_idx, outreach_sending_idx) — the indexes are also declared on
+# the Outreach ORM model, so they must be included here too or
+# test_create_all_and_the_migration_agree_on_indexes_and_constraints would
+# compare a migration-built `outreach` missing two indexes the create_all
+# side has. 009 (outreach.reclaim_count) is a column-only ALTER with no new
+# index, so — like 008 before this stack — it never needed to join this list.
 MIGRATIONS = (
     MIGRATION,
     MIGRATIONS_DIR / "007_profiles.sql",
     MIGRATIONS_DIR / "008_user_llm_and_quota.sql",
+    MIGRATIONS_DIR / "010_send_cadence.sql",
 )
 
 # Everything before 006, in the order Postgres saw it in production. Sorted by

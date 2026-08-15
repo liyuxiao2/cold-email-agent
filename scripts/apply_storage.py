@@ -12,11 +12,16 @@ file is independent and idempotent). Two distinct gaps land here:
     (migrations/storage.sql).
   * ALTER TABLE on an existing table (R43): create_all only ever issues
     CREATE TABLE — it never alters a table that already exists. A migration
-    that adds columns to `users` (008_user_llm_and_quota.sql) or `outreach`
-    (009_outreach_reclaim_count.sql) is therefore invisible to create_all on
-    any database that already has that table, which in production is every
-    deploy after the first. Written entirely as `ADD COLUMN IF NOT EXISTS`, so
-    it's as safe to run on every boot as the storage DDL.
+    that adds columns to `users` (008_user_llm_and_quota.sql,
+    010_send_cadence.sql) or `outreach` (009_outreach_reclaim_count.sql,
+    010_send_cadence.sql's new indexes) is therefore invisible to create_all
+    on any database that already has that table, which in production is
+    every deploy after the first. Written entirely as `ADD COLUMN IF NOT
+    EXISTS` / `CREATE INDEX IF NOT EXISTS`, so it's as safe to run on every
+    boot as the storage DDL. Migration 008 was originally missed here, which
+    would have produced a full authenticated-app outage that /api/health
+    reported as healthy (health only counts Company, never users) — do not
+    repeat that gap for a new ALTER TABLE.
 
 SQL_FILES is a list, not a single path, so a later stack that hits either
 class of gap (another column needing a non-default storage strategy, a
@@ -45,6 +50,7 @@ SQL_FILES = (
     MIGRATIONS_DIR / "storage.sql",
     MIGRATIONS_DIR / "008_user_llm_and_quota.sql",
     MIGRATIONS_DIR / "009_outreach_reclaim_count.sql",
+    MIGRATIONS_DIR / "010_send_cadence.sql",
 )
 
 
