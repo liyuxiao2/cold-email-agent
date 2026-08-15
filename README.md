@@ -1,26 +1,33 @@
 # Cold Email Agent
 
-Autonomous cold email pipeline that discovers early-stage startups, researches founders, drafts personalized outreach, and sends via Instantly.io after human review.
+Autonomous cold email pipeline that discovers early-stage startups, researches founders and a pool of emailable contacts, drafts personalized outreach, and sends via the Gmail API after human review.
 
 ## Pipeline
+
+The pipeline is split into a GLOBAL half (companies, research, contacts —
+admin-populated, shared by every user) and a PER-USER half (outreach, drafts —
+one user's attempt to reach one company). See `CLAUDE.md` and
+`docs/architecture-flow.md` for the full two-level model and Mermaid diagrams.
 
 ```
 Celery Beat (Monday 8am)
     |
     v
 discovery_task --> Firecrawl Extract (startups.gallery, YC, etc.)
-    |  inserts leads with status='found'
+    |  inserts companies with research_status='found'
     |
-    +---> research_task --> Firecrawl + Claude + Hunter.io
-              |  enriches founder info, extracts hook; status='researched'
+    +---> research_task --> scrape + LLM (Groq/Gemini) + Hunter Domain Search
+              |  enriches company info, extracts hook, saves a contact pool;
+              |  research_status='researched'
               |
-              +---> drafting_task --> Claude
-                        |  generates email; status='drafted'
+              +---> drafting_task --> LLM (Groq/Gemini, automatic failover)
+                        |  generates email for each queued outreach row;
+                        |  outreach.status='drafted'
                         |
                   [Human review via dashboard]
                         |
-                  logistics_task --> Instantly.io
-                        status='sent'
+                  logistics_task --> Gmail API
+                        outreach.status='sent'
 ```
 
 ## Prerequisites
@@ -99,17 +106,27 @@ If you prefer separate terminals for cleaner logs, run `make worker`, `make beat
 ```
 cold_email/
   config.py            # pydantic-settings, loads .env
-  database.py          # SQLAlchemy models + sync/async engines
+  database.py          # SQLAlchemy models (Company, CompanyContact, Outreach, ...) + sync/async engines
   celery_app.py        # Celery app + Beat schedule
   workers/
-    discovery.py       # Firecrawl Extract -> find startups
-    research.py        # Firecrawl + Claude -> enrich leads
-    drafting.py        # Claude -> write emails
-    logistics.py       # Instantly.io -> send emails
+    discovery/
+      discovery.py      # Firecrawl Extract -> find companies
+    research/
+      research.py       # Celery orchestration; helpers/ has scraping, LLM, Hunter Domain Search
+    drafting/
+      drafting.py        # Celery orchestration; helpers/ has LLM generation, DB writes
+    logistics/
+      logistics.py       # Gmail API -> send emails
+    shared/
+      llm.py             # provider-agnostic generate_json (Groq + Gemini, automatic failover)
+      errors.py           # fail_company / fail_outreach -> dead_letter
   api/
     main.py            # FastAPI app
     routes/
-      dashboard.py     # Review & approve UI
+      outreach.py       # per-user outreach routes (review, approve/reject/regenerate)
+      companies.py      # read-only global company pool
+      pipeline.py        # discovery/drafting/research triggers + stats
+      dlq.py              # dead-letter queue list/retry
 ```
 
 ## Verification
@@ -117,11 +134,11 @@ cold_email/
 | Step | How to verify |
 |------|--------------|
 | Infrastructure | `docker compose ps` - redis + postgres healthy |
-| Database | `psql $DATABASE_URL -c "SELECT * FROM leads LIMIT 5"` |
-| Discovery | Trigger manually, check Celery logs + leads table |
-| Research | Check `research` table for `hook` values |
+| Database | `psql $DATABASE_URL -c "SELECT * FROM companies LIMIT 5"` |
+| Discovery | Trigger manually, check Celery logs + `companies` table |
+| Research | Check `research` table for `hook` values and `company_contacts` for the contact pool |
 | Drafting | Check `drafts` table for generated emails |
-| Dashboard | `localhost:8000` - drafted leads appear |
+| Dashboard | `localhost:3000` - drafted outreach rows appear in the review queue |
 
 ## Tech Stack
 
@@ -130,8 +147,9 @@ cold_email/
 | Task queue | Celery + Redis |
 | Database | SQLAlchemy 2.0 + asyncpg/psycopg2 |
 | Web server | FastAPI |
-| LLM | Anthropic Claude |
+| LLM | Groq + Google Gemini, provider-agnostic layer with automatic failover |
 | Web scraping | Firecrawl |
-| Email delivery | Instantly.io |
+| Contact discovery | Hunter.io Domain Search |
+| Email delivery | Gmail API |
 | Config | pydantic-settings |
 | Packaging | uv |
