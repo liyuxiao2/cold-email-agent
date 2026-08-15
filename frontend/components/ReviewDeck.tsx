@@ -10,8 +10,10 @@ import {
   ExternalLink,
   Copy,
   Check,
+  CalendarClock,
 } from 'lucide-react';
 import type { OutreachDraft, OutreachItem } from '@/lib/api';
+import ScheduleDialog from './ScheduleDialog';
 
 interface ReviewDeckProps {
   leads: OutreachItem[];
@@ -19,6 +21,10 @@ interface ReviewDeckProps {
   /** outreach_id of the row whose action is in flight, or null */
   actionLoading: string | null;
   onApprove: (lead: OutreachItem) => void;
+  /** The dialog's "Schedule" / "Send now instead" confirm. `whenIso` is null
+   * for "send now" (overrides any cadence). Resolves true on success so the
+   * dialog only closes then. */
+  onApproveScheduled: (lead: OutreachItem, whenIso: string | null) => Promise<boolean>;
   /** Resolves true when the rejection succeeded, so the modal only closes then. */
   onReject: (outreachId: string, notes: string) => Promise<boolean>;
   onRegenerate: (lead: OutreachItem) => void;
@@ -38,6 +44,7 @@ export default function ReviewDeck({
   loading,
   actionLoading,
   onApprove,
+  onApproveScheduled,
   onReject,
   onRegenerate,
   onTriggerDiscovery,
@@ -46,6 +53,7 @@ export default function ReviewDeck({
   const [rejectingOutreachId, setRejectingOutreachId] = useState<string | null>(null);
   const [rejectNotes, setRejectNotes] = useState<string>('');
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [schedulingLead, setSchedulingLead] = useState<OutreachItem | null>(null);
 
   const copyDraft = (draft: OutreachDraft | null | undefined, id: string) => {
     if (!draft) return;
@@ -62,6 +70,12 @@ export default function ReviewDeck({
       setRejectingOutreachId(null);
       setRejectNotes('');
     }
+  };
+
+  const handleScheduleConfirm = async (whenIso: string | null) => {
+    if (!schedulingLead) return;
+    const succeeded = await onApproveScheduled(schedulingLead, whenIso);
+    if (succeeded) setSchedulingLead(null);
   };
 
   return (
@@ -222,6 +236,9 @@ export default function ReviewDeck({
 
                 {/* Action Buttons */}
                 <div style={{ display: 'flex', gap: '8px', marginTop: '1.5rem' }}>
+                  {/* One click for the common case (uses the caller's cadence,
+                      or sends now if none is set); scheduling a specific
+                      instant is opt-in per email via the second button. */}
                   <button
                     onClick={() => onApprove(lead)}
                     disabled={actionLoading === lead.outreach_id}
@@ -243,7 +260,25 @@ export default function ReviewDeck({
                     }}
                   >
                     <Send size={15} />
-                    Approve & Send
+                    Approve
+                  </button>
+
+                  <button
+                    onClick={() => setSchedulingLead(lead)}
+                    disabled={actionLoading === lead.outreach_id}
+                    title="Approve & schedule…"
+                    style={{
+                      padding: '10px 14px',
+                      borderRadius: '8px',
+                      backgroundColor: 'var(--bg-secondary)',
+                      color: 'var(--text-secondary)',
+                      border: '1px solid var(--border-color)',
+                      fontWeight: 600,
+                      fontSize: '0.85rem',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <CalendarClock size={15} />
                   </button>
 
                   <button
@@ -441,6 +476,14 @@ export default function ReviewDeck({
           </div>
         </div>
       )}
+
+      <ScheduleDialog
+        open={schedulingLead !== null}
+        companyName={schedulingLead?.company?.company_name ?? ''}
+        submitting={schedulingLead !== null && actionLoading === schedulingLead.outreach_id}
+        onClose={() => setSchedulingLead(null)}
+        onConfirm={handleScheduleConfirm}
+      />
     </div>
   );
 }

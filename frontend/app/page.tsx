@@ -7,26 +7,36 @@ import {
   RefreshCw,
   Zap,
   Compass,
+  Clock,
   Mail,
   LogOut,
   AlertCircle,
   User as UserIcon,
 } from 'lucide-react';
 import {
+  Cadence,
   OutreachItem,
   PipelineStats as PipelineStatsData,
+  ScheduledItem,
   approveOutreach,
+  deleteCadence,
   fetchDraftQueue,
   fetchPipelineStats,
+  getCadence,
+  getScheduled,
+  putCadence,
   regenerateDraft,
   rejectOutreach,
   triggerDiscovery,
   triggerDrafting,
+  unscheduleOutreach,
 } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import AdminPanel from '@/components/AdminPanel';
+import CadenceSettings from '@/components/CadenceSettings';
 import PipelineStats from '@/components/PipelineStats';
 import ReviewDeck from '@/components/ReviewDeck';
+import ScheduledQueue from '@/components/ScheduledQueue';
 
 const errorMessage = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
@@ -50,6 +60,11 @@ export default function DashboardPage() {
   const [triggeringDrafting, setTriggeringDrafting] = useState<boolean>(false);
   const [notification, setNotification] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
+  const [cadence, setCadence] = useState<Cadence | null>(null);
+  const [cadenceSaving, setCadenceSaving] = useState<boolean>(false);
+  const [scheduled, setScheduled] = useState<ScheduledItem[]>([]);
+  const [scheduledLoading, setScheduledLoading] = useState<boolean>(true);
+
   const showNotification = useCallback((message: string, type: 'success' | 'error' = 'success') => {
     setNotification({ message, type });
     setTimeout(() => setNotification(null), 4000);
@@ -72,6 +87,32 @@ export default function DashboardPage() {
     }
   }, [showNotification]);
 
+  const loadScheduling = useCallback(async () => {
+    try {
+      setScheduledLoading(true);
+      const [cadenceData, scheduledData] = await Promise.all([getCadence(), getScheduled()]);
+      setCadence(cadenceData.cadence);
+      setScheduled(scheduledData.items);
+    } catch (err: unknown) {
+      console.error(err);
+      showNotification(`Connection error: ${errorMessage(err)}`, 'error');
+    } finally {
+      setScheduledLoading(false);
+    }
+  }, [showNotification]);
+
+  /** Renders how the send time is displayed for the toast and the scheduled
+   * queue: the cadence's own timezone if one is configured, otherwise the
+   * browser's -- always with a UTC offset alongside so a bare local time is
+   * never ambiguous. */
+  const formatInDisplayTz = (iso: string) =>
+    new Intl.DateTimeFormat('en-US', {
+      timeZone: cadence?.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
+      weekday: 'short',
+      hour: 'numeric',
+      minute: '2-digit',
+    }).format(new Date(iso));
+
   useEffect(() => {
     if (authLoading) return;
     if (!user) router.push('/login');
@@ -80,8 +121,11 @@ export default function DashboardPage() {
 
   // Only fetch once we know there is a session; an anonymous call would 401.
   useEffect(() => {
-    if (user) loadData();
-  }, [user, loadData]);
+    if (user) {
+      loadData();
+      loadScheduling();
+    }
+  }, [user, loadData, loadScheduling]);
 
   /** Bumps the per-user `outreach` half of stats; `companies` is untouched —
       these actions never change the global research pool. */
@@ -97,15 +141,93 @@ export default function DashboardPage() {
     });
   };
 
+  /** Common-case approve: uses the caller's cadence if one is configured,
+   * otherwise sends on the next scanner tick (<=5 min). Approve only sets
+   * state now -- send_due_task's Beat scan does the actual dispatch, so the
+   * toast reports what WILL happen, not "dispatched". */
   const handleApprove = async (lead: OutreachItem) => {
+    const name = lead.company?.company_name ?? 'company';
     try {
       setActionLoading(lead.outreach_id);
-      await approveOutreach(lead.outreach_id);
+      const result = await approveOutreach(lead.outreach_id);
       setDraftQueue((prev) => prev.filter((item) => item.outreach_id !== lead.outreach_id));
       bumpOutreachStats('drafted', 'approved');
-      showNotification(`Approved outreach for ${lead.company?.company_name ?? 'company'}! Dispatched logistics task.`);
+      showNotification(
+        result.scheduled_send_at
+          ? `Approved ${name} -- scheduled for ${formatInDisplayTz(result.scheduled_send_at)}.`
+          : `Approved ${name} -- sending within 5 minutes.`
+      );
+      loadScheduling();
     } catch (err: unknown) {
       showNotification(`Failed to approve: ${errorMessage(err)}`, 'error');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  /** The "Approve & schedule…" dialog's confirm. `whenIso` is null for "send
+   * now" (overrides any cadence). Returns whether it succeeded so the dialog
+   * only closes on success. */
+  const handleApproveScheduled = async (lead: OutreachItem, whenIso: string | null): Promise<boolean> => {
+    const name = lead.company?.company_name ?? 'company';
+    try {
+      setActionLoading(lead.outreach_id);
+      const result = whenIso
+        ? await approveOutreach(lead.outreach_id, { scheduled_send_at: whenIso })
+        : await approveOutreach(lead.outreach_id, { send_now: true });
+      setDraftQueue((prev) => prev.filter((item) => item.outreach_id !== lead.outreach_id));
+      bumpOutreachStats('drafted', 'approved');
+      showNotification(
+        result.scheduled_send_at
+          ? `Approved ${name} -- scheduled for ${formatInDisplayTz(result.scheduled_send_at)}.`
+          : `Approved ${name} -- sending within 5 minutes.`
+      );
+      loadScheduling();
+      return true;
+    } catch (err: unknown) {
+      showNotification(`Failed to schedule: ${errorMessage(err)}`, 'error');
+      return false;
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleSaveCadence = async (next: Cadence) => {
+    try {
+      setCadenceSaving(true);
+      const result = await putCadence(next);
+      setCadence(result.cadence);
+      showNotification('Cadence saved.');
+    } catch (err: unknown) {
+      showNotification(`Failed to save cadence: ${errorMessage(err)}`, 'error');
+    } finally {
+      setCadenceSaving(false);
+    }
+  };
+
+  const handleClearCadence = async () => {
+    try {
+      setCadenceSaving(true);
+      await deleteCadence();
+      setCadence(null);
+      showNotification('Cadence cleared -- approvals send immediately.');
+    } catch (err: unknown) {
+      showNotification(`Failed to clear cadence: ${errorMessage(err)}`, 'error');
+    } finally {
+      setCadenceSaving(false);
+    }
+  };
+
+  const handleUnschedule = async (outreachId: string) => {
+    try {
+      setActionLoading(outreachId);
+      await unscheduleOutreach(outreachId);
+      setScheduled((prev) => prev.filter((item) => item.outreach_id !== outreachId));
+      bumpOutreachStats('approved', 'drafted');
+      showNotification('Unscheduled -- back in the review queue.');
+      loadData();
+    } catch (err: unknown) {
+      showNotification(`Failed to unschedule: ${errorMessage(err)}`, 'error');
     } finally {
       setActionLoading(null);
     }
@@ -392,11 +514,60 @@ export default function DashboardPage() {
         loading={loading}
         actionLoading={actionLoading}
         onApprove={handleApprove}
+        onApproveScheduled={handleApproveScheduled}
         onReject={handleReject}
         onRegenerate={handleRegenerate}
         onTriggerDiscovery={handleTriggerDiscovery}
         isAdmin={user.role === 'admin'}
       />
+
+      {/* Scheduling */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '8px',
+          padding: '2.5rem 0 1.5rem',
+          fontWeight: 700,
+          fontSize: '0.95rem',
+        }}
+      >
+        <Clock size={16} />
+        Scheduling
+      </div>
+
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'minmax(280px, 1fr) minmax(320px, 1.2fr)',
+          gap: '1.5rem',
+        }}
+      >
+        <CadenceSettings
+          cadence={cadence}
+          saving={cadenceSaving}
+          onSave={handleSaveCadence}
+          onClear={handleClearCadence}
+        />
+
+        <div
+          style={{
+            backgroundColor: 'var(--bg-card)',
+            border: '1px solid var(--border-color)',
+            borderRadius: '16px',
+            padding: '1.5rem',
+          }}
+        >
+          <div style={{ fontWeight: 700, marginBottom: '0.75rem' }}>Upcoming sends</div>
+          <ScheduledQueue
+            items={scheduled}
+            loading={scheduledLoading}
+            displayTimezone={cadence?.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone}
+            actionLoading={actionLoading}
+            onUnschedule={handleUnschedule}
+          />
+        </div>
+      </div>
     </div>
   );
 }
