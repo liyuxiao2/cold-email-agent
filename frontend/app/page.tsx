@@ -6,7 +6,6 @@ import {
   CheckCircle,
   RefreshCw,
   Zap,
-  Building,
   Compass,
   Mail,
   LogOut,
@@ -14,11 +13,9 @@ import {
   User as UserIcon,
 } from 'lucide-react';
 import {
-  CompanyItem,
   OutreachItem,
   PipelineStats as PipelineStatsData,
   approveOutreach,
-  fetchCompanies,
   fetchDraftQueue,
   fetchPipelineStats,
   regenerateDraft,
@@ -28,7 +25,6 @@ import {
 } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import AdminPanel from '@/components/AdminPanel';
-import CompanyExplorer from '@/components/CompanyExplorer';
 import PipelineStats from '@/components/PipelineStats';
 import ReviewDeck from '@/components/ReviewDeck';
 
@@ -37,9 +33,10 @@ const errorMessage = (err: unknown) => (err instanceof Error ? err.message : Str
 /**
  * The dashboard container: auth gate, all shared state, all data fetching.
  *
- * Everything visual lives in the four presentational components below. State
- * that only one of them reads (copy-button feedback, reject-modal text, the
- * explorer's filters) lives inside that component instead of here.
+ * Everything visual lives in the presentational components below. The old
+ * "Company Explorer" tab (a stale-shape table over /api/companies) was
+ * retired in favor of the dedicated /pool page, which already covers browsing
+ * the shared company pool against the real PoolCompany shape.
  */
 export default function DashboardPage() {
   const { user, loading: authLoading, logout } = useAuth();
@@ -47,12 +44,6 @@ export default function DashboardPage() {
 
   const [stats, setStats] = useState<PipelineStatsData | null>(null);
   const [draftQueue, setDraftQueue] = useState<OutreachItem[]>([]);
-  const [allCompanies, setAllCompanies] = useState<CompanyItem[]>([]);
-  const [activeTab, setActiveTab] = useState<'review' | 'explorer'>('review');
-  // The explorer's filters live here, not in CompanyExplorer: that component
-  // unmounts on a tab switch, so local state would reset them each time.
-  const [statusFilter, setStatusFilter] = useState<string>('all');
-  const [searchQuery, setSearchQuery] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(true);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [triggeringDiscovery, setTriggeringDiscovery] = useState<boolean>(false);
@@ -81,16 +72,6 @@ export default function DashboardPage() {
     }
   }, [showNotification]);
 
-  const loadExplorerCompanies = useCallback(async () => {
-    try {
-      const filter = statusFilter === 'all' ? undefined : statusFilter;
-      const data = await fetchCompanies({ status: filter, search: searchQuery || undefined, limit: 100 });
-      setAllCompanies(data.items);
-    } catch (err: unknown) {
-      console.error(err);
-    }
-  }, [statusFilter, searchQuery]);
-
   useEffect(() => {
     if (authLoading) return;
     if (!user) router.push('/login');
@@ -101,12 +82,6 @@ export default function DashboardPage() {
   useEffect(() => {
     if (user) loadData();
   }, [user, loadData]);
-
-  useEffect(() => {
-    if (activeTab === 'explorer') {
-      loadExplorerCompanies();
-    }
-  }, [activeTab, loadExplorerCompanies]);
 
   /** Bumps the per-user `outreach` half of stats; `companies` is untouched —
       these actions never change the global research pool. */
@@ -383,96 +358,45 @@ export default function DashboardPage() {
       {/* Pipeline Stats Bar */}
       <PipelineStats stats={stats} loading={loading} />
 
-      {/* Tabs */}
+      {/* Draft Review Queue */}
       <div
         style={{
           display: 'flex',
+          alignItems: 'center',
           gap: '8px',
-          borderBottom: '1px solid var(--border-color)',
-          marginBottom: '1.5rem',
+          padding: '10px 0 1.5rem',
+          fontWeight: 700,
+          fontSize: '0.95rem',
         }}
       >
-        <button
-          onClick={() => setActiveTab('review')}
-          style={{
-            padding: '10px 20px',
-            border: 'none',
-            background: 'none',
-            color: activeTab === 'review' ? 'var(--text-primary)' : 'var(--text-secondary)',
-            fontWeight: 700,
-            fontSize: '0.95rem',
-            cursor: 'pointer',
-            borderBottom: activeTab === 'review' ? '2px solid var(--accent-primary)' : '2px solid transparent',
-            marginBottom: '-1px',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px',
-          }}
-        >
-          <Mail size={16} />
-          Draft Review Queue
-          {draftQueue.length > 0 && (
-            <span
-              style={{
-                fontSize: '0.75rem',
-                backgroundColor: 'var(--warning)',
-                color: '#000',
-                padding: '2px 8px',
-                borderRadius: '999px',
-                fontWeight: 800,
-              }}
-            >
-              {draftQueue.length}
-            </span>
-          )}
-        </button>
-
-        <button
-          onClick={() => setActiveTab('explorer')}
-          style={{
-            padding: '10px 20px',
-            border: 'none',
-            background: 'none',
-            color: activeTab === 'explorer' ? 'var(--text-primary)' : 'var(--text-secondary)',
-            fontWeight: 700,
-            fontSize: '0.95rem',
-            cursor: 'pointer',
-            borderBottom: activeTab === 'explorer' ? '2px solid var(--accent-primary)' : '2px solid transparent',
-            marginBottom: '-1px',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px',
-          }}
-        >
-          <Building size={16} />
-          Company Explorer
-        </button>
+        <Mail size={16} />
+        Draft Review Queue
+        {draftQueue.length > 0 && (
+          <span
+            style={{
+              fontSize: '0.75rem',
+              backgroundColor: 'var(--warning)',
+              color: '#000',
+              padding: '2px 8px',
+              borderRadius: '999px',
+              fontWeight: 800,
+            }}
+          >
+            {draftQueue.length}
+          </span>
+        )}
       </div>
 
-      {/* Tab Content: Draft Review Queue */}
-      {activeTab === 'review' && (
-        <ReviewDeck
-          leads={draftQueue}
-          loading={loading}
-          actionLoading={actionLoading}
-          onApprove={handleApprove}
-          onReject={handleReject}
-          onRegenerate={handleRegenerate}
-          onTriggerDiscovery={handleTriggerDiscovery}
-          isAdmin={user.role === 'admin'}
-        />
-      )}
-
-      {/* Tab Content: Company Explorer (the global pool) */}
-      {activeTab === 'explorer' && (
-        <CompanyExplorer
-          companies={allCompanies}
-          statusFilter={statusFilter}
-          searchQuery={searchQuery}
-          onStatusFilterChange={setStatusFilter}
-          onSearchQueryChange={setSearchQuery}
-        />
-      )}
+      <ReviewDeck
+        leads={draftQueue}
+        loading={loading}
+        actionLoading={actionLoading}
+        onApprove={handleApprove}
+        onReject={handleReject}
+        onRegenerate={handleRegenerate}
+        onTriggerDiscovery={handleTriggerDiscovery}
+        isAdmin={user.role === 'admin'}
+      />
     </div>
   );
 }

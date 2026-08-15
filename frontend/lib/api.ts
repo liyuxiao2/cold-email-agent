@@ -40,22 +40,6 @@ export interface OutreachItem {
   updated_at?: string | null;
 }
 
-export interface CompanyItem {
-  id: string;
-  company_name: string;
-  founder_name?: string | null;
-  company_url?: string | null;
-  linkedin_url?: string | null;
-  funding_stage?: string | null;
-  headcount?: number | null;
-  industry?: string | null;
-  research_status: string;
-  error_msg?: string | null;
-  created_at?: string | null;
-  updated_at?: string | null;
-  research?: OutreachResearch | null;
-}
-
 export interface PipelineStats {
   companies: Record<string, number>;
   outreach: Record<string, number>;
@@ -87,13 +71,6 @@ export interface ResumeUploadResult {
 
 export interface OutreachPage {
   items: OutreachItem[];
-  total: number;
-  limit: number;
-  offset: number;
-}
-
-export interface CompanyPage {
-  items: CompanyItem[];
   total: number;
   limit: number;
   offset: number;
@@ -198,21 +175,6 @@ export function fetchPipelineStats(): Promise<PipelineStats> {
 
 export function fetchDraftQueue(): Promise<OutreachItem[]> {
   return request<OutreachItem[]>('/api/outreach/drafts');
-}
-
-export function fetchCompanies(params?: {
-  status?: string;
-  search?: string;
-  limit?: number;
-  offset?: number;
-}): Promise<CompanyPage> {
-  const query = new URLSearchParams();
-  if (params?.status) query.set('status', params.status);
-  if (params?.search) query.set('search', params.search);
-  if (params?.limit) query.set('limit', params.limit.toString());
-  if (params?.offset) query.set('offset', params.offset.toString());
-
-  return request<CompanyPage>(`/api/companies?${query.toString()}`);
 }
 
 export function approveOutreach(outreachId: string): Promise<TaskAck> {
