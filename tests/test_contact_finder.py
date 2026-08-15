@@ -52,6 +52,25 @@ def test_every_decision_maker_pattern_is_eligible(pattern):
     assert c.eligible is True, f"pattern not matched: {pattern}"
 
 
+@pytest.mark.parametrize(
+    "position",
+    [
+        "Creative Director",
+        "Art Director",
+        "Director of Finance",
+        "Office Coordinator",
+        "Sales Coordinator",
+        "Warehouse Coordinator",
+    ],
+)
+def test_acronym_substrings_do_not_false_positive(position):
+    """'cto' is a substring of dire-cto-r and 'coo' of coo-rdinator; these
+    titles must not be classified as decision-makers just because a C-suite
+    acronym happens to appear mid-word."""
+    [c] = classify_contacts([_contact(position=position)], "Zed Other")
+    assert c.eligible is False, f"false positive: {position}"
+
+
 def test_missing_position_is_ineligible_unless_founder():
     [c] = classify_contacts([_contact(position=None)], "Zed Other")
     assert c.eligible is False

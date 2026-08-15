@@ -160,11 +160,25 @@ def find_contacts(domain: str | None) -> list[HunterContact]:
     return contacts
 
 
+# The three-letter C-suite acronyms are also substrings of common non-decision
+# titles — "cto" sits inside "dire-cto-r", "coo" starts "coo-rdinator" — so
+# plain substring matching against DECISION_MAKER_PATTERNS would wrongly
+# qualify a Creative/Art/Finance Director or an Office/Sales/Warehouse
+# Coordinator. Multi-word patterns like "head of engineering" have no such
+# collision risk, so they keep the simple (and desirable) substring match.
+# Acronyms alone get a word-boundary regex instead.
+_ACRONYM_PATTERNS = frozenset({"ceo", "cto", "coo"})
+_SUBSTRING_PATTERNS = tuple(p for p in DECISION_MAKER_PATTERNS if p not in _ACRONYM_PATTERNS)
+_ACRONYM_RE = re.compile(r"\b(?:" + "|".join(sorted(_ACRONYM_PATTERNS)) + r")\b", re.IGNORECASE)
+
+
 def _is_decision_maker(position: str | None) -> bool:
     if not position:
         return False
     lowered = position.lower()
-    return any(pattern in lowered for pattern in DECISION_MAKER_PATTERNS)
+    if _ACRONYM_RE.search(lowered):
+        return True
+    return any(pattern in lowered for pattern in _SUBSTRING_PATTERNS)
 
 
 def _is_founder_position(position: str | None) -> bool:
