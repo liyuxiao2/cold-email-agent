@@ -219,3 +219,19 @@ def pending_views():
             conn.exec_driver_sql(f"DROP VIEW IF EXISTS {view} CASCADE")
         conn.commit()
     engine.dispose()
+
+
+@pytest_asyncio.fixture
+async def other_user_outreach(async_session):
+    """A drafted outreach row owned by somebody other than `user_client`."""
+    from cold_email.database import OUTREACH_DRAFTED, ROLE_USER, Company, Outreach, User
+
+    other = User(email="other@example.com", google_sub="sub-other", role=ROLE_USER)
+    company = Company(company_name="OtherCo")
+    async_session.add_all([other, company])
+    await async_session.commit()
+
+    outreach = Outreach(user_id=other.id, company_id=company.id, status=OUTREACH_DRAFTED)
+    async_session.add(outreach)
+    await async_session.commit()
+    return outreach
