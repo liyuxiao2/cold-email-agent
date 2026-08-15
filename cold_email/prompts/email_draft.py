@@ -16,33 +16,33 @@ WHY_COMPANY_EXAMPLES = (
     "  * 'I\\'ve been following your development of a universal API that simplifies access to critical GPS, safety, "
     "and dash cam data from 100+ telematics integrations for commercial trucking. I\\'m really drawn to the high-ownership "
     "culture you\\'ve built, and wanted to see if there might be a fit for me to contribute to the team.'\n"
-    "  * 'I\\'ve been using Apollo for a while now and love what you guys are doing for cold outreach. Personally, "
-    "Apollo was the reason I found my first internship (it\\'s how I sourced 80% of my hiring manager contacts), "
+    "  * 'I\\'ve been using [Product] for a while now and love what you guys are doing. Personally, "
+    "your product was the reason I found my first internship (it\\'s how I sourced 80% of my contacts), "
     "and I\\'d love the chance to contribute to your mission and learn from the team.'\n"
-    "  * 'Congrats on the recent seed round! Seeing how Nourish leverages AI-native metabolic care to drive "
-    "measurable outcomes in chronic disease management is incredibly exciting, and I wanted to see if there might "
+    "  * 'Congrats on the recent seed round! Seeing how [Company] leverages AI-native solutions to drive "
+    "measurable outcomes is incredibly exciting, and I wanted to see if there might "
     "be a fit for me to contribute to the engineering team.'"
 )
 
 SUBJECT_EXAMPLES = (
     "Good Examples:\n"
-    "  * 'Engineering / Nourish'\n"
-    "  * 'Wealthsimple / Nourish'\n"
-    "  * 'McMaster CS / Nourish'"
+    "  * 'Engineering / [Company]'\n"
+    "  * '[Current Company] / [Company]'\n"
+    "  * '[Your University] CS / [Company]'"
 )
 
 INTRO_EXAMPLES = (
     "Good Examples:\n"
-    "  * 'My name is Liyu, a Computer Science student at McMaster currently interning at Wealthsimple and previously at IBM.'\n"
-    "  * 'I’m Liyu, a second-year computer science student based in Toronto, currently interning at IBM as a software engineer.'\n"
-    "  * 'My name is Liyu; I\\'m a CS student at McMaster with software engineering experience at IBM and Wealthsimple.'"
+    "  * 'My name is [Your Name], a Computer Science student at [Your University] currently interning at [Current Company] and previously at [Previous Company].'\n"
+    "  * 'I’m [Your Name], a second-year computer science student based in [Your Location], currently interning at [Current Company] as a software engineer.'\n"
+    "  * 'My name is [Your Name]; I\\'m a CS student at [Your University] with software engineering experience at [Previous Company] and [Current Company].'"
 )
 
 TAILORED_BULLETS_EXAMPLES = (
     "Good Examples:\n"
-    "  * 'Wealthsimple: Architected a Ruby adapter and led development of an RESP engine for 3M+ clients, relevant to Nourish\\'s AI-native platform'\n"
-    "  * 'IBM: Built backend infrastructure for 25,000+ authors, cutting database cluster calls by 66%'\n"
-    "  * 'Wealthsimple: Supported the core financial ledger system processing transactions for over 3 million Canadians'"
+    "  * '[Current Company]: Architected a Ruby adapter and led development of a key engine for 3M+ clients, relevant to [Company]\\'s platform'\n"
+    "  * '[Previous Company]: Built backend infrastructure for 25,000+ users, cutting database cluster calls by 66%'\n"
+    "  * '[Current Company]: Supported the core transaction system processing transactions for over 3 million users'"
 )
 
 EMAIL_DRAFT_SYSTEM = (
@@ -63,7 +63,7 @@ EMAIL_DRAFT_SYSTEM = (
     f"  {INTRO_EXAMPLES}\n"
     "- `tailored_bullets`: choose or generate the 3 experience bullets from the provided resume that "
     "are MOST relevant to this company, ordered most-relevant first. Return each as a "
-    "'Label: achievement' string (where Label is the company/project name, e.g., 'Wealthsimple: Developed a financial hold...'). "
+    "'Label: achievement' string (where Label is the company/project name, e.g., '[Current Company]: Developed a financial hold...'). "
     "You may lightly rephrase/tailor them for relevance, but never fabricate achievements or change the numbers/facts.\n"
     f"  {TAILORED_BULLETS_EXAMPLES}\n"
     "- `subject`: a short, specific subject line referencing the company by name. No "
