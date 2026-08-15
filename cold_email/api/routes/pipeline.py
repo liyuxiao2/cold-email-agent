@@ -5,7 +5,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from cold_email.database import Lead, get_async_session
+from cold_email.auth.deps import get_current_user, require_admin
+from cold_email.database import Lead, User, get_async_session
 
 logger = logging.getLogger(__name__)
 
@@ -13,7 +14,10 @@ router = APIRouter(prefix="/pipeline", tags=["pipeline"])
 
 
 @router.get("/stats")
-async def get_pipeline_stats(session: AsyncSession = Depends(get_async_session)):
+async def get_pipeline_stats(
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(get_current_user),
+):
     """Return count of leads grouped by status."""
     stmt = select(Lead.status, func.count(Lead.id)).group_by(Lead.status)
     result = await session.execute(stmt)
@@ -27,7 +31,7 @@ async def get_pipeline_stats(session: AsyncSession = Depends(get_async_session))
 
 
 @router.post("/discovery")
-async def trigger_discovery_api():
+async def trigger_discovery_api(admin: User = Depends(require_admin)):
     """Manually trigger a discovery run."""
     try:
         from cold_email.workers.discovery import discovery_task
@@ -43,7 +47,7 @@ async def trigger_discovery_api():
 
 
 @router.post("/drafting")
-async def trigger_drafting_api():
+async def trigger_drafting_api(admin: User = Depends(require_admin)):
     """Manually trigger a drafting batch sweep."""
     try:
         from cold_email.workers.drafting import drafting_task
@@ -61,6 +65,7 @@ async def trigger_drafting_api():
 @router.post("/research")
 async def trigger_research_api(
     session: AsyncSession = Depends(get_async_session),
+    admin: User = Depends(require_admin),
 ):
     """Re-dispatch research for leads stuck in 'found' — discovered but never researched.
 

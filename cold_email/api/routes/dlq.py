@@ -4,7 +4,8 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from cold_email.database import DeadLetter, Lead, get_async_session
+from cold_email.auth.deps import get_current_user
+from cold_email.database import DeadLetter, Lead, User, get_async_session
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +21,10 @@ _DLQ_STAGE_RESET = {
 
 
 @router.get("")
-async def list_dead_letter(session: AsyncSession = Depends(get_async_session)):
+async def list_dead_letter(
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(get_current_user),
+):
     """List dead-lettered (terminally-failed) tasks awaiting retry."""
     stmt = (
         select(DeadLetter, Lead.company_name)
@@ -52,6 +56,7 @@ async def retry_dead_letter(
         None, description="Only retry this stage (research/drafting/logistics)"
     ),
     session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(get_current_user),
 ):
     """Re-dispatch dead-lettered tasks: reset each lead to its stage's input
     state, re-enqueue the worker, and clear the row. A task that fails again is
