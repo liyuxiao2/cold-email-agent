@@ -22,6 +22,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from cold_email.database import Base
 from tests.conftest import TEST_DB_URL
 
 MIGRATIONS_DIR = pathlib.Path(__file__).resolve().parent.parent / "migrations"
@@ -59,6 +60,51 @@ async def _run_script(engine, sql: str) -> None:
 
 async def _reset_schema(engine) -> None:
     await _run_script(engine, "DROP SCHEMA public CASCADE; CREATE SCHEMA public;")
+
+
+# The tables migration 006 creates or rewrites. Both provisioning paths — this
+# file and Base.metadata.create_all — must produce identical indexes and
+# constraints on all of them.
+CONVERGING_TABLES = (
+    "companies",
+    "company_contacts",
+    "outreach",
+    "research",
+    "drafts",
+    "dead_letter",
+)
+
+
+async def _schema_fingerprint(engine) -> dict:
+    """Every index definition and constraint on the tables 006 touches."""
+    async with engine.connect() as conn:
+        indexes = (
+            await conn.execute(
+                text("""
+                SELECT indexname, indexdef FROM pg_indexes
+                WHERE schemaname = 'public' AND tablename = ANY(:tables)
+                ORDER BY indexname
+                """),
+                {"tables": list(CONVERGING_TABLES)},
+            )
+        ).all()
+        constraints = (
+            await conn.execute(
+                text("""
+                SELECT cl.relname, con.conname, con.contype
+                FROM pg_constraint con
+                JOIN pg_class cl ON cl.oid = con.conrelid
+                JOIN pg_namespace n ON n.oid = cl.relnamespace
+                WHERE n.nspname = 'public' AND cl.relname = ANY(:tables)
+                ORDER BY cl.relname, con.conname
+                """),
+                {"tables": list(CONVERGING_TABLES)},
+            )
+        ).all()
+    return {
+        "indexes": {name: definition for name, definition in indexes},
+        "constraints": {(t, name, kind) for t, name, kind in constraints},
+    }
 
 
 async def _run_migration(session) -> None:
@@ -457,3 +503,89 @@ async def test_a_draft_with_no_outreach_row_aborts_instead_of_being_deleted(
             text("SELECT body FROM drafts WHERE subject_line = 'Hi ResearchCo'")
         )
     ).scalar_one() == "precious body"
+
+
+@pytest_asyncio.fixture
+async def legacy_fixture_without_dead_letter(legacy_fixture, legacy_session):
+    """A database that never had 004 applied — or that was provisioned by
+    create_all before the DeadLetter model existed."""
+    await legacy_session.execute(text("DROP TABLE dead_letter"))
+    await legacy_session.commit()
+
+
+@pytest.mark.asyncio
+async def test_aborts_when_dead_letter_is_missing(
+    legacy_session, legacy_fixture_without_dead_letter
+):
+    """Dying halfway through `ALTER TABLE dead_letter` against production is far
+    worse than refusing to start and naming the file to apply."""
+    with pytest.raises(asyncpg.exceptions.RaiseError, match="004_dead_letter.sql"):
+        await _run_migration(legacy_session)
+
+
+@pytest.mark.asyncio
+async def test_refuses_to_run_twice(legacy_fixture, legacy_session):
+    """A second run finds `leads` already renamed, and stops there rather than
+    failing partway through the table surgery."""
+    await _run_migration(legacy_session)
+    with pytest.raises(asyncpg.exceptions.RaiseError, match="nothing to migrate"):
+        await _run_migration(legacy_session)
+
+
+@pytest.mark.asyncio
+async def test_refuses_a_schema_built_from_the_post_split_models(legacy_fixture, legacy_session):
+    """A create_all boot on the post-1b models leaves `leads` in place but
+    `research` already keyed by company, and renaming a column that is not there
+    would abort mid-transaction with a raw Postgres error."""
+    await legacy_session.execute(text("DROP VIEW pending_drafts"))
+    await legacy_session.execute(text("ALTER TABLE research DROP COLUMN lead_id"))
+    await legacy_session.commit()
+
+    with pytest.raises(asyncpg.exceptions.RaiseError, match="already migrated"):
+        await _run_migration(legacy_session)
+
+
+@pytest.mark.asyncio
+async def test_adopts_tables_a_create_all_boot_already_made(legacy_fixture, legacy_session):
+    """scripts/start.sh runs create_all on every boot, so the new tables can
+    already exist (empty) by the time this migration runs. It must adopt them,
+    not collide with them."""
+    await legacy_session.execute(
+        text("""
+        CREATE TABLE companies (
+            id UUID PRIMARY KEY, company_name TEXT NOT NULL, company_url TEXT,
+            linkedin_url TEXT, founder_name TEXT, funding_stage TEXT, headcount INT,
+            industry TEXT, research_status TEXT NOT NULL, error_msg TEXT,
+            created_at TIMESTAMPTZ DEFAULT now(), updated_at TIMESTAMPTZ DEFAULT now()
+        )
+        """)
+    )
+    await legacy_session.commit()
+
+    await _run_migration(legacy_session)
+
+    assert (await legacy_session.execute(text("SELECT COUNT(*) FROM companies"))).scalar_one() == 7
+
+
+@pytest.mark.asyncio
+async def test_create_all_and_the_migration_agree_on_indexes_and_constraints(
+    legacy_fixture, legacy_session, legacy_engine
+):
+    """The two provisioning paths must converge.
+
+    Production provisions with Base.metadata.create_all (scripts/start.sh), not
+    with these files, so an index that exists only in the SQL — the partial
+    company_contacts_eligible_idx, say — would simply be absent from the
+    database the selection queries actually run against.
+    """
+    await _run_migration(legacy_session)
+    from_migration = await _schema_fingerprint(legacy_engine)
+    await legacy_session.close()
+
+    await _reset_schema(legacy_engine)
+    async with legacy_engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    from_create_all = await _schema_fingerprint(legacy_engine)
+
+    assert from_create_all["indexes"] == from_migration["indexes"]
+    assert from_create_all["constraints"] == from_migration["constraints"]

@@ -9,8 +9,17 @@
 --
 -- `leads` is RENAMED to leads_legacy, never dropped, so a bad deploy is
 -- recoverable without restoring a backup. A follow-up PR drops it.
+--
+-- This database has two provisioning histories: these migration files, and
+-- Base.metadata.create_all on every boot (scripts/start.sh). The preflight
+-- guards below assert the pre-migration shape rather than assuming either, and
+-- the additive DDL is idempotent, so a table create_all already made is
+-- adopted instead of colliding. Every guard raises before any DDL runs: a
+-- migration that refuses to start beats one that dies halfway through.
 
 BEGIN;
+
+-- ================================================================= PREFLIGHT
 
 -- Abort if Stack 1a's admin seed has not run: there would be nobody to own the
 -- backfilled outreach rows, and silently dropping that history is worse than
@@ -22,6 +31,40 @@ BEGIN
     END IF;
 END $$;
 
+-- The tables this migration rewrites must be present and still in their
+-- pre-migration shape. Checked up front because the alternative is discovering
+-- it from a raw Postgres error partway through a production run.
+DO $$
+BEGIN
+    IF to_regclass('leads') IS NULL THEN
+        RAISE EXCEPTION
+            'Table "leads" is missing. This migration rewrites it; there is nothing to migrate.';
+    END IF;
+
+    -- dead_letter came from 004, but create_all builds it from the ORM instead,
+    -- so a database provisioned either way can be missing it entirely.
+    IF to_regclass('dead_letter') IS NULL THEN
+        RAISE EXCEPTION
+            'Table "dead_letter" is missing. Apply migrations/004_dead_letter.sql first, then re-run this migration.';
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'research' AND column_name = 'lead_id'
+    ) THEN
+        RAISE EXCEPTION
+            'Column research.lead_id is missing, so this schema is already migrated (or was built from the post-1b models). Refusing to run 006 again.';
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'drafts' AND column_name = 'lead_id'
+    ) THEN
+        RAISE EXCEPTION
+            'Column drafts.lead_id is missing, so this schema is already migrated (or was built from the post-1b models). Refusing to run 006 again.';
+    END IF;
+END $$;
+
 -- Drop the old views up front, before the columns they read disappear.
 -- Postgres refuses `ALTER TABLE drafts DROP COLUMN lead_id` while pending_sends
 -- still selects it, so these cannot wait until the new views are defined below.
@@ -29,7 +72,7 @@ DROP VIEW IF EXISTS pending_drafts;
 DROP VIEW IF EXISTS pending_sends;
 
 -- ---------------------------------------------------------------- companies
-CREATE TABLE companies (
+CREATE TABLE IF NOT EXISTS companies (
     id              UUID PRIMARY KEY,
     company_name    TEXT NOT NULL,
     company_url     TEXT,
@@ -43,14 +86,14 @@ CREATE TABLE companies (
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE INDEX companies_name_idx   ON companies (company_name);
-CREATE INDEX companies_status_idx ON companies (research_status);
+CREATE INDEX IF NOT EXISTS companies_name_idx   ON companies (company_name);
+CREATE INDEX IF NOT EXISTS companies_status_idx ON companies (research_status);
 
 -- ---------------------------------------------------- company_contacts
 -- One row per Hunter domain-search result. Ineligible contacts are stored too,
 -- so loosening DECISION_MAKER_PATTERNS later can re-classify stored rows
 -- instead of re-spending Hunter credits.
-CREATE TABLE company_contacts (
+CREATE TABLE IF NOT EXISTS company_contacts (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     company_id  UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
     email       TEXT NOT NULL,
@@ -63,15 +106,15 @@ CREATE TABLE company_contacts (
     is_founder  BOOLEAN NOT NULL DEFAULT false,
     eligible    BOOLEAN NOT NULL DEFAULT false,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (company_id, email)
+    CONSTRAINT uq_contact_company_email UNIQUE (company_id, email)
 );
 -- Partial: selection and pool queries only ever read eligible contacts, so
 -- indexing the ineligible ones wastes space and write throughput.
-CREATE INDEX company_contacts_eligible_idx
+CREATE INDEX IF NOT EXISTS company_contacts_eligible_idx
     ON company_contacts (company_id) WHERE eligible;
 
 -- ----------------------------------------------------------------- outreach
-CREATE TABLE outreach (
+CREATE TABLE IF NOT EXISTS outreach (
     id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id           UUID NOT NULL REFERENCES users(id)            ON DELETE CASCADE,
     company_id        UUID NOT NULL REFERENCES companies(id)        ON DELETE CASCADE,
@@ -83,11 +126,11 @@ CREATE TABLE outreach (
     error_msg         TEXT,
     created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (user_id, company_id)
+    CONSTRAINT uq_outreach_user_company UNIQUE (user_id, company_id)
 );
-CREATE INDEX outreach_user_status_idx ON outreach (user_id, status);
+CREATE INDEX IF NOT EXISTS outreach_user_status_idx ON outreach (user_id, status);
 -- For Stack 3's per-contact cap query: COUNT(*) WHERE contact_id = ?
-CREATE INDEX outreach_contact_idx     ON outreach (contact_id);
+CREATE INDEX IF NOT EXISTS outreach_contact_idx     ON outreach (contact_id);
 
 -- =================================================================== BACKFILL
 
@@ -162,9 +205,16 @@ BEGIN
 END $$;
 
 ALTER TABLE research RENAME COLUMN lead_id TO company_id;
-ALTER TABLE research
-    ADD CONSTRAINT research_company_fk
-    FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE;
+DO $$
+BEGIN
+    -- Named as Postgres/SQLAlchemy would name it implicitly, so a create_all
+    -- boot and this migration produce the same constraint.
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'research_company_id_fkey') THEN
+        ALTER TABLE research
+            ADD CONSTRAINT research_company_id_fkey
+            FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE;
+    END IF;
+END $$;
 
 -- 4. outreach <- leads that reached drafting or beyond, owned by the admin.
 --    'failed' WITH an email is a drafting/send failure (per-user);
@@ -184,7 +234,7 @@ WHERE l.status IN ('drafted', 'approved', 'sent', 'rejected')
    OR (l.status = 'failed' AND l.founder_email IS NOT NULL);
 
 -- 5. drafts: lead_id -> outreach_id via the shared company id.
-ALTER TABLE drafts ADD COLUMN outreach_id UUID REFERENCES outreach(id) ON DELETE CASCADE;
+ALTER TABLE drafts ADD COLUMN IF NOT EXISTS outreach_id UUID REFERENCES outreach(id) ON DELETE CASCADE;
 UPDATE drafts d
 SET outreach_id = o.id
 FROM outreach o
@@ -209,13 +259,13 @@ END $$;
 
 ALTER TABLE drafts DROP COLUMN lead_id;
 ALTER TABLE drafts ALTER COLUMN outreach_id SET NOT NULL;
-CREATE INDEX drafts_outreach_idx ON drafts (outreach_id);
+CREATE INDEX IF NOT EXISTS drafts_outreach_idx ON drafts (outreach_id);
 
 -- 6. dead_letter: two nullable FKs. Research failures are company-level
 --    ("nobody can email them"); drafting/send failures are outreach-level
 --    ("this user's draft broke"). One FK would lose that distinction.
-ALTER TABLE dead_letter ADD COLUMN company_id  UUID REFERENCES companies(id) ON DELETE CASCADE;
-ALTER TABLE dead_letter ADD COLUMN outreach_id UUID REFERENCES outreach(id) ON DELETE CASCADE;
+ALTER TABLE dead_letter ADD COLUMN IF NOT EXISTS company_id  UUID REFERENCES companies(id) ON DELETE CASCADE;
+ALTER TABLE dead_letter ADD COLUMN IF NOT EXISTS outreach_id UUID REFERENCES outreach(id) ON DELETE CASCADE;
 
 UPDATE dead_letter SET company_id = lead_id WHERE stage = 'research';
 
@@ -230,9 +280,16 @@ UPDATE dead_letter SET company_id = lead_id
 WHERE outreach_id IS NULL AND company_id IS NULL;
 
 ALTER TABLE dead_letter DROP COLUMN lead_id;
-ALTER TABLE dead_letter
-    ADD CONSTRAINT dead_letter_one_level
-    CHECK (company_id IS NOT NULL OR outreach_id IS NOT NULL);
+-- 004 created this; a create_all-provisioned database never had it.
+CREATE INDEX IF NOT EXISTS dead_letter_stage_idx ON dead_letter (stage);
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'dead_letter_one_level') THEN
+        ALTER TABLE dead_letter
+            ADD CONSTRAINT dead_letter_one_level
+            CHECK (company_id IS NOT NULL OR outreach_id IS NOT NULL);
+    END IF;
+END $$;
 
 -- ==================================================================== VIEWS
 CREATE VIEW pending_drafts AS

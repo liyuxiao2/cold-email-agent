@@ -7,6 +7,7 @@ from sqlalchemy import (
     Column,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     LargeBinary,
     String,
@@ -14,6 +15,7 @@ from sqlalchemy import (
     UniqueConstraint,
     create_engine,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -79,14 +81,14 @@ class Company(Base):
     __tablename__ = "companies"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    company_name = Column(String, nullable=False, index=True)
+    company_name = Column(String, nullable=False)
     company_url = Column(String)
     linkedin_url = Column(String)
     founder_name = Column(String)
     funding_stage = Column(String)
     headcount = Column(Integer)
     industry = Column(String)
-    research_status = Column(String, nullable=False, default=RESEARCH_FOUND, index=True)
+    research_status = Column(String, nullable=False, default=RESEARCH_FOUND)
     error_msg = Column(Text)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
@@ -96,6 +98,15 @@ class Company(Base):
         "CompanyContact", back_populates="company", cascade="all, delete-orphan"
     )
     outreach = relationship("Outreach", back_populates="company", cascade="all, delete-orphan")
+
+    # Named explicitly rather than via Column(index=True), which would emit
+    # ix_companies_company_name: production provisions with create_all (see
+    # scripts/start.sh) while migration 006 provisions with SQL, and the two
+    # paths must produce byte-identical indexes.
+    __table_args__ = (
+        Index("companies_name_idx", "company_name"),
+        Index("companies_status_idx", "research_status"),
+    )
 
 
 class CompanyContact(Base):
@@ -127,7 +138,12 @@ class CompanyContact(Base):
 
     company = relationship("Company", back_populates="contacts")
 
-    __table_args__ = (UniqueConstraint("company_id", "email", name="uq_contact_company_email"),)
+    __table_args__ = (
+        UniqueConstraint("company_id", "email", name="uq_contact_company_email"),
+        # Partial: selection and pool queries only ever read eligible contacts,
+        # so indexing the ineligible ones wastes space and write throughput.
+        Index("company_contacts_eligible_idx", "company_id", postgresql_where=text("eligible")),
+    )
 
 
 class Outreach(Base):
@@ -146,7 +162,7 @@ class Outreach(Base):
     )
     # SET NULL, not CASCADE — see the model docstring in CompanyContact.
     contact_id = Column(UUID(as_uuid=True), ForeignKey("company_contacts.id", ondelete="SET NULL"))
-    status = Column(String, nullable=False, default=OUTREACH_QUEUED, index=True)
+    status = Column(String, nullable=False, default=OUTREACH_QUEUED)
     scheduled_send_at = Column(DateTime(timezone=True))  # NULL = send immediately
     error_msg = Column(Text)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -156,7 +172,12 @@ class Outreach(Base):
     contact = relationship("CompanyContact")
     drafts = relationship("Draft", back_populates="outreach", cascade="all, delete-orphan")
 
-    __table_args__ = (UniqueConstraint("user_id", "company_id", name="uq_outreach_user_company"),)
+    __table_args__ = (
+        UniqueConstraint("user_id", "company_id", name="uq_outreach_user_company"),
+        Index("outreach_user_status_idx", "user_id", "status"),
+        # For Stack 3's per-contact cap query: COUNT(*) WHERE contact_id = ?
+        Index("outreach_contact_idx", "contact_id"),
+    )
 
 
 class Research(Base):
@@ -189,6 +210,8 @@ class Draft(Base):
 
     outreach = relationship("Outreach", back_populates="drafts")
 
+    __table_args__ = (Index("drafts_outreach_idx", "outreach_id"),)
+
 
 class DeadLetter(Base):
     """One row per terminally-failed task.
@@ -219,6 +242,7 @@ class DeadLetter(Base):
         CheckConstraint(
             "company_id IS NOT NULL OR outreach_id IS NOT NULL", name="dead_letter_one_level"
         ),
+        Index("dead_letter_stage_idx", "stage"),
     )
 
 
