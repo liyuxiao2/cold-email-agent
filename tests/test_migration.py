@@ -257,3 +257,203 @@ async def test_aborts_without_an_admin(legacy_session, legacy_fixture_no_admin):
     # script runs on the raw connection, so SQLAlchemy never wraps it.
     with pytest.raises(asyncpg.exceptions.RaiseError, match="No admin user exists"):
         await _run_migration(legacy_session)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "company,expected",
+    [
+        ("FoundCo", "found"),
+        ("ResearchCo", "researched"),
+        ("DraftCo", "researched"),
+        ("SentCo", "researched"),
+        ("NoEmailCo", "failed"),  # failed with no email = research failed
+        ("DraftFailCo", "researched"),  # failed WITH an email = drafting failed
+    ],
+)
+async def test_research_status_mapping(legacy_fixture, legacy_session, company, expected):
+    await _run_migration(legacy_session)
+    status = (
+        await legacy_session.execute(
+            text("SELECT research_status FROM companies WHERE company_name = :n"), {"n": company}
+        )
+    ).scalar_one()
+    assert status == expected
+
+
+@pytest.mark.asyncio
+async def test_company_ids_are_preserved(legacy_fixture, legacy_session):
+    """The trick the whole migration rests on."""
+    await _run_migration(legacy_session)
+    row = (
+        await legacy_session.execute(
+            text("SELECT id FROM companies WHERE company_name = 'ResearchCo'")
+        )
+    ).scalar_one()
+    assert str(row) == "22222222-2222-2222-2222-222222222222"
+
+
+@pytest.mark.asyncio
+async def test_founder_email_becomes_an_eligible_founder_contact(legacy_fixture, legacy_session):
+    await _run_migration(legacy_session)
+    row = (
+        await legacy_session.execute(
+            text("""
+            SELECT ct.email, ct.first_name, ct.last_name, ct.is_founder,
+                   ct.eligible, ct.confidence
+            FROM company_contacts ct
+            JOIN companies c ON c.id = ct.company_id
+            WHERE c.company_name = 'ResearchCo'
+            """)
+        )
+    ).one()
+    assert row.email == "ann@research.co"
+    assert row.first_name == "Ann"
+    assert row.last_name == "Reed"
+    assert row.is_founder is True
+    assert row.eligible is True
+    assert row.confidence == 25  # sentinel: Hunter's real score was never stored
+
+
+@pytest.mark.asyncio
+async def test_single_word_founder_name_gets_no_fabricated_surname(legacy_fixture, legacy_session):
+    await _run_migration(legacy_session)
+    row = (
+        await legacy_session.execute(
+            text("""
+            SELECT ct.first_name, ct.last_name FROM company_contacts ct
+            JOIN companies c ON c.id = ct.company_id WHERE c.company_name = 'OneWordCo'
+            """)
+        )
+    ).one()
+    assert row.first_name == "Prince"
+    assert row.last_name is None
+
+
+@pytest.mark.asyncio
+async def test_lead_without_an_email_gets_no_contact_and_no_outreach(
+    legacy_fixture, legacy_session
+):
+    await _run_migration(legacy_session)
+    counts = (
+        await legacy_session.execute(
+            text("""
+            SELECT
+              (SELECT COUNT(*) FROM company_contacts ct JOIN companies c ON c.id = ct.company_id
+                WHERE c.company_name = 'NoEmailCo') AS contacts,
+              (SELECT COUNT(*) FROM outreach o JOIN companies c ON c.id = o.company_id
+                WHERE c.company_name = 'NoEmailCo') AS outreach
+            """)
+        )
+    ).one()
+    assert counts.contacts == 0
+    assert counts.outreach == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "company,status",
+    [("DraftCo", "drafted"), ("SentCo", "sent"), ("DraftFailCo", "failed")],
+)
+async def test_outreach_status_carried_over(legacy_fixture, legacy_session, company, status):
+    await _run_migration(legacy_session)
+    got = (
+        await legacy_session.execute(
+            text("""
+            SELECT o.status FROM outreach o JOIN companies c ON c.id = o.company_id
+            WHERE c.company_name = :n
+            """),
+            {"n": company},
+        )
+    ).scalar_one()
+    assert got == status
+
+
+@pytest.mark.asyncio
+async def test_outreach_is_owned_by_the_admin(legacy_fixture, legacy_session, admin_user_id):
+    await _run_migration(legacy_session)
+    owners = (
+        (await legacy_session.execute(text("SELECT DISTINCT user_id FROM outreach")))
+        .scalars()
+        .all()
+    )
+    assert owners == [admin_user_id]
+
+
+@pytest.mark.asyncio
+async def test_research_rows_still_resolve_to_their_company(legacy_fixture, legacy_session):
+    await _run_migration(legacy_session)
+    hook = (
+        await legacy_session.execute(
+            text("""
+            SELECT r.hook FROM research r JOIN companies c ON c.id = r.company_id
+            WHERE c.company_name = 'ResearchCo'
+            """)
+        )
+    ).scalar_one()
+    assert hook == "hook"
+
+
+@pytest.mark.asyncio
+async def test_drafts_point_at_the_right_outreach_row(legacy_fixture, legacy_session):
+    await _run_migration(legacy_session)
+    subject = (
+        await legacy_session.execute(
+            text("""
+            SELECT d.subject_line FROM drafts d
+            JOIN outreach o  ON o.id = d.outreach_id
+            JOIN companies c ON c.id = o.company_id
+            WHERE c.company_name = 'DraftCo'
+            """)
+        )
+    ).scalar_one()
+    assert subject == "Hi DraftCo"
+
+
+@pytest.mark.asyncio
+async def test_dead_letter_rows_land_on_the_right_level(legacy_fixture, legacy_session):
+    await _run_migration(legacy_session)
+    rows = (
+        await legacy_session.execute(
+            text("SELECT stage, company_id, outreach_id FROM dead_letter ORDER BY stage")
+        )
+    ).all()
+    by_stage = {r.stage: r for r in rows}
+    assert by_stage["research"].company_id is not None
+    assert by_stage["research"].outreach_id is None
+    assert by_stage["drafting"].outreach_id is not None
+
+
+@pytest.mark.asyncio
+async def test_legacy_table_retains_every_row(legacy_fixture, legacy_session):
+    await _run_migration(legacy_session)
+    assert (
+        await legacy_session.execute(text("SELECT COUNT(*) FROM leads_legacy"))
+    ).scalar_one() == 7
+
+
+@pytest.mark.asyncio
+async def test_a_draft_with_no_outreach_row_aborts_instead_of_being_deleted(
+    legacy_fixture, legacy_session
+):
+    """Deleting an unmatchable draft would destroy a generated email body
+    forever — leads_legacy preserves the lead, but not the draft text. Stop and
+    make a human look instead."""
+    # ResearchCo never reached 'drafted', so it gets no outreach row; a draft
+    # hanging off it has nowhere to go.
+    await legacy_session.execute(
+        text("""
+        INSERT INTO drafts (lead_id, subject_line, body)
+        VALUES ('22222222-2222-2222-2222-222222222222', 'Hi ResearchCo', 'precious body')
+        """)
+    )
+    await legacy_session.commit()
+
+    with pytest.raises(asyncpg.exceptions.RaiseError, match="refusing to delete draft bodies"):
+        await _run_migration(legacy_session)
+
+    assert (
+        await legacy_session.execute(
+            text("SELECT body FROM drafts WHERE subject_line = 'Hi ResearchCo'")
+        )
+    ).scalar_one() == "precious body"
