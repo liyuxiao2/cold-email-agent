@@ -122,6 +122,33 @@ export type LlmKeyStatus = {
   last4: string | null;
 };
 
+/** The JSONB shape stored on users.send_cadence. See cold_email/cadence.py. */
+export type Cadence = {
+  max_per_day: number;
+  days: number[];
+  window_start: string;
+  window_end: string;
+  timezone: string;
+};
+
+export type ApproveResult = {
+  success: boolean;
+  outreach_id: string;
+  status: string;
+  scheduled_send_at: string | null;
+};
+
+export type BulkApproveResult = {
+  approved: { outreach_id: string; scheduled_send_at: string | null }[];
+  skipped: number;
+};
+
+export type ScheduledItem = {
+  outreach_id: string;
+  company_name: string;
+  scheduled_send_at: string;
+};
+
 const getApiBaseUrl = () => {
   if (typeof window !== 'undefined') {
     return process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
@@ -177,8 +204,60 @@ export function fetchDraftQueue(): Promise<OutreachItem[]> {
   return request<OutreachItem[]>('/api/outreach/drafts');
 }
 
-export function approveOutreach(outreachId: string): Promise<TaskAck> {
-  return request<TaskAck>(`/api/outreach/${outreachId}/approve`, { method: 'POST' });
+/**
+ * Approve a draft, optionally scheduling it.
+ *
+ * With no body: sends on the caller's next free cadence slot if one is
+ * configured, otherwise on the next scanner tick (<=5 min). `scheduled_send_at`
+ * pins an exact instant (even one in the past -- that reads as "send now").
+ * `send_now: true` overrides any cadence and sends on the next tick.
+ */
+export function approveOutreach(
+  outreachId: string,
+  body?: { scheduled_send_at?: string; send_now?: boolean }
+): Promise<ApproveResult> {
+  return request<ApproveResult>(`/api/outreach/${outreachId}/approve`, {
+    method: 'POST',
+    body: JSON.stringify(body ?? {}),
+  });
+}
+
+/** Approves many drafts at once, spreading them across cadence slots in ONE
+ * walk -- approving each individually would give every draft the same next
+ * free slot. */
+export function bulkApprove(outreachIds: string[], sendNow = false): Promise<BulkApproveResult> {
+  return request<BulkApproveResult>('/api/outreach/bulk-approve', {
+    method: 'POST',
+    body: JSON.stringify({ outreach_ids: outreachIds, send_now: sendNow }),
+  });
+}
+
+/** Pulls an approved send back to the review deck, as 'drafted' (the draft
+ * already exists -- no LLM re-run). */
+export function unscheduleOutreach(outreachId: string): Promise<{ success: boolean; status: string }> {
+  return request<{ success: boolean; status: string }>(`/api/outreach/${outreachId}/unschedule`, {
+    method: 'POST',
+  });
+}
+
+/** The caller's own upcoming sends, soonest first. */
+export function getScheduled(): Promise<{ items: ScheduledItem[] }> {
+  return request<{ items: ScheduledItem[] }>('/api/outreach/scheduled');
+}
+
+export function getCadence(): Promise<{ cadence: Cadence | null }> {
+  return request<{ cadence: Cadence | null }>('/api/cadence');
+}
+
+export function putCadence(cadence: Cadence): Promise<{ cadence: Cadence }> {
+  return request<{ cadence: Cadence }>('/api/cadence', {
+    method: 'PUT',
+    body: JSON.stringify(cadence),
+  });
+}
+
+export function deleteCadence(): Promise<{ cadence: null }> {
+  return request<{ cadence: null }>('/api/cadence', { method: 'DELETE' });
 }
 
 export function rejectOutreach(outreachId: string, notes: string = ''): Promise<TaskAck> {
