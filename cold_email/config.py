@@ -21,11 +21,11 @@ class Settings(BaseSettings):
     groq_api_key: str = ""
     hunter_api_key: str = ""
 
-    # Gmail API — OAuth2 refresh-token flow (single sender mailbox)
+    # Gmail OAuth APPLICATION credentials. App-level, not per-user: Google
+    # requires them to refresh ANY user's token. The per-user refresh token
+    # lives on users.gmail_refresh_token_enc.
     gmail_client_id: str = ""
     gmail_client_secret: str = ""
-    gmail_refresh_token: str = ""
-    gmail_sender_email: str = ""
 
     # Sender identity is per-user, in the `profiles` table (see
     # cold_email.database.Profile / SenderProfile.from_row), not here.
