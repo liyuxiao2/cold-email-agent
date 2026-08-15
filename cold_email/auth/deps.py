@@ -44,7 +44,5 @@ async def require_admin(user: User = Depends(get_current_user)) -> User:
     the problem.
     """
     if not user.is_admin:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, detail="Admin role required"
-        )
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin role required")
     return user
