@@ -31,7 +31,14 @@ MIGRATION = MIGRATIONS_DIR / "006_multi_tenant_schema.sql"
 # side too, or test_create_all_and_the_migration_agree_on_indexes_and_constraints
 # would compare schemas of different vintage. Extend this list — not just
 # MIGRATION — as later stacks add migrations that need parity coverage.
-MIGRATIONS = (MIGRATION, MIGRATIONS_DIR / "007_profiles.sql")
+# R43: 008 adds llm_api_key_enc / llm_provider / monthly_draft_quota to `users`
+# via idempotent ALTER TABLE ... ADD COLUMN IF NOT EXISTS, so it applies
+# cleanly on top of the legacy schema's pre-existing `users` table (005).
+MIGRATIONS = (
+    MIGRATION,
+    MIGRATIONS_DIR / "007_profiles.sql",
+    MIGRATIONS_DIR / "008_user_llm_and_quota.sql",
+)
 
 # Everything before 006, in the order Postgres saw it in production. Sorted by
 # filename, which is how the files are numbered (note two 002_* files).

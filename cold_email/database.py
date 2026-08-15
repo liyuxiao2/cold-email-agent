@@ -51,6 +51,11 @@ class User(Base):
     # Fernet ciphertext of the Gmail refresh token — never a plaintext token.
     gmail_refresh_token_enc = Column(LargeBinary)
     gmail_sender_email = Column(String)
+    # Optional BYOK: bypasses both the platform quota and the shared token
+    # bucket, since the user is spending their own limits.
+    llm_api_key_enc = Column(LargeBinary)
+    llm_provider = Column(String)  # groq | gemini
+    monthly_draft_quota = Column(Integer, nullable=False, default=100)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
