@@ -25,6 +25,16 @@ logger = logging.getLogger(__name__)
 # worse outcome than an error message telling the user to upload a text PDF.
 MIN_EXTRACTED_CHARS = 100
 
+# Above this, the "PDF" is not a résumé — it's a report, a book, or a dense
+# text dump. Even a long, dense multi-page CV (5-10 pages of small type) tops
+# out well under this; ~20,000 chars is roughly 3,000-4,000 words, generous
+# for a résumé but nowhere near book length. The cap matters beyond the LLM
+# call itself: `profile.resume_text` is committed BEFORE suggest_profile ever
+# runs, so an unbounded value doesn't just fail once — it lands in
+# `effective_resume_text` and gets fed into EVERY future drafting prompt for
+# EVERY lead, forever (see `cold_email.sender_profile.SenderProfile`).
+MAX_EXTRACTED_CHARS = 20_000
+
 
 class ResumeUnreadable(ValueError):
     """The PDF is corrupt, or carries no extractable text."""
@@ -43,6 +53,13 @@ def extract_text(pdf_bytes: bytes) -> str:
             "We couldn't read text from this PDF; it may be a scan or an image export. "
             "Please upload a text-based PDF."
         )
+
+    if len(text) > MAX_EXTRACTED_CHARS:
+        logger.warning(
+            f"Extracted résumé text truncated from {len(text)} to {MAX_EXTRACTED_CHARS} chars"
+        )
+        text = text[:MAX_EXTRACTED_CHARS]
+
     return text
 
 

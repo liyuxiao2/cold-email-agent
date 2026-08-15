@@ -7,9 +7,11 @@ from cold_email.database import OUTREACH_DRAFTED
 from cold_email.workers.drafting.drafting import drafting_task
 from cold_email.workers.shared.gmail_client import GmailCredentials
 from cold_email.workers.shared.views import PendingDraft
+from tests.conftest import _add_queued_outreach
 
 OUTREACH_A = "00000000-0000-0000-0000-00000000000a"
 OUTREACH_B = "00000000-0000-0000-0000-00000000000b"
+USER_1 = "00000000-0000-0000-0000-0000000000u1"
 
 # A fake SenderContext for tests that only exercise the per-row loop, not
 # load_sender_context itself — profile/creds are never dereferenced because
@@ -24,10 +26,10 @@ _FAKE_CONTEXT = SimpleNamespace(
 )
 
 
-def _pending_row(outreach_id, contact_email="contact@acme.com"):
+def _pending_row(outreach_id, contact_email="contact@acme.com", user_id=USER_1):
     return PendingDraft(
         outreach_id=outreach_id,
-        user_id="00000000-0000-0000-0000-0000000000u1",
+        user_id=user_id,
         company_id="00000000-0000-0000-0000-0000000000c1",
         contact_id="00000000-0000-0000-0000-0000000000ct1",
         company_name="Acme",
@@ -48,16 +50,21 @@ def test_drafting_sweep_empty():
     """No pending outreach rows -> the sweep is a no-op returning drafted: 0."""
     with (
         patch("cold_email.workers.drafting.drafting.bridge_queue_admin_outreach", return_value=0),
+        patch("cold_email.workers.drafting.drafting.fetch_pending_user_ids", return_value=[]),
         patch("cold_email.workers.drafting.drafting.fetch_pending_drafts", return_value=[]),
     ):
         result = drafting_task()
-    assert result == {"status": "success", "drafted": 0}
+    assert result == {"status": "success", "drafted": 0, "skipped": {}}
 
 
 def test_drafting_sweep_happy_path():
     """A draftable outreach row is generated, drafted in Gmail, persisted, and advanced."""
     with (
         patch("cold_email.workers.drafting.drafting.bridge_queue_admin_outreach", return_value=0),
+        patch(
+            "cold_email.workers.drafting.drafting.fetch_pending_user_ids",
+            return_value=[USER_1],
+        ),
         patch(
             "cold_email.workers.drafting.drafting.fetch_pending_drafts",
             return_value=[_pending_row(OUTREACH_A)],
@@ -83,7 +90,7 @@ def test_drafting_sweep_happy_path():
     ):
         result = drafting_task()
 
-    assert result == {"status": "success", "drafted": 1}
+    assert result == {"status": "success", "drafted": 1, "skipped": {}}
     args, kwargs = mock_create.call_args
     assert args[0] is _FAKE_CONTEXT.creds
     assert kwargs["to"] == "contact@acme.com"
@@ -102,6 +109,10 @@ def test_drafting_skips_outreach_without_contact_email():
     with (
         patch("cold_email.workers.drafting.drafting.bridge_queue_admin_outreach", return_value=0),
         patch(
+            "cold_email.workers.drafting.drafting.fetch_pending_user_ids",
+            return_value=[USER_1],
+        ),
+        patch(
             "cold_email.workers.drafting.drafting.fetch_pending_drafts",
             return_value=[_pending_row(OUTREACH_A, contact_email=None)],
         ),
@@ -114,7 +125,7 @@ def test_drafting_skips_outreach_without_contact_email():
     ):
         result = drafting_task()
 
-    assert result == {"status": "success", "drafted": 0}
+    assert result == {"status": "success", "drafted": 0, "skipped": {}}
     mock_draft.assert_not_called()
     mock_fail.assert_called_once()
     assert mock_fail.call_args.args[0] == OUTREACH_A
@@ -124,6 +135,10 @@ def test_drafting_marks_empty_draft_failed():
     """An empty/malformed model draft is terminal for that outreach row."""
     with (
         patch("cold_email.workers.drafting.drafting.bridge_queue_admin_outreach", return_value=0),
+        patch(
+            "cold_email.workers.drafting.drafting.fetch_pending_user_ids",
+            return_value=[USER_1],
+        ),
         patch(
             "cold_email.workers.drafting.drafting.fetch_pending_drafts",
             return_value=[_pending_row(OUTREACH_A)],
@@ -139,7 +154,7 @@ def test_drafting_marks_empty_draft_failed():
     ):
         result = drafting_task()
 
-    assert result == {"status": "success", "drafted": 0}
+    assert result == {"status": "success", "drafted": 0, "skipped": {}}
     mock_create.assert_not_called()
     assert mock_fail.call_args.args[0] == OUTREACH_A
 
@@ -148,6 +163,10 @@ def test_drafting_one_bad_outreach_does_not_abort_sweep():
     """A transient failure on one row leaves it for the next sweep; others still draft."""
     with (
         patch("cold_email.workers.drafting.drafting.bridge_queue_admin_outreach", return_value=0),
+        patch(
+            "cold_email.workers.drafting.drafting.fetch_pending_user_ids",
+            return_value=[USER_1],
+        ),
         patch(
             "cold_email.workers.drafting.drafting.fetch_pending_drafts",
             return_value=[_pending_row(OUTREACH_A), _pending_row(OUTREACH_B)],
@@ -172,7 +191,7 @@ def test_drafting_one_bad_outreach_does_not_abort_sweep():
         result = drafting_task()
 
     # Only the second row drafted; the first was left at 'queued' (no status write).
-    assert result == {"status": "success", "drafted": 1}
+    assert result == {"status": "success", "drafted": 1, "skipped": {}}
     mock_status.assert_called_once_with(OUTREACH_B, OUTREACH_DRAFTED)
 
 
@@ -378,7 +397,8 @@ async def test_missing_profile_aborts_the_sweep_and_keeps_rows_queued(
     from cold_email.workers.drafting.drafting import drafting_task
 
     result = drafting_task()
-    assert result["status"] == "no_profile"
+    assert result["status"] == "success"
+    assert result["skipped"][admin_user_id] == "no_profile"
 
     await async_session.refresh(queued_outreach)
     assert queued_outreach.status == OUTREACH_QUEUED
@@ -398,7 +418,8 @@ async def test_missing_gmail_credentials_aborts_the_sweep(
     from cold_email.workers.drafting.drafting import drafting_task
 
     result = drafting_task()
-    assert result["status"] == "gmail_disconnected"
+    assert result["status"] == "success"
+    assert result["skipped"][admin_user_id] == "gmail_disconnected"
 
     await async_session.refresh(queued_outreach)
     assert queued_outreach.status == OUTREACH_QUEUED
@@ -457,3 +478,168 @@ async def test_resume_is_read_once_per_sweep_not_per_lead(
 
     drafting_module.drafting_task()
     assert len(reads) == 1, f"résumé read {len(reads)} times for 3 leads"
+
+
+@pytest.mark.asyncio
+async def test_drafting_pairs_each_users_own_credentials_and_resume(
+    async_session, sync_session_for, pending_views, monkeypatch, captured_drafts
+):
+    """The bug this test would have caught: a single-context sweep drafted
+    EVERY pending row with the FIRST owner's profile, résumé, and Gmail
+    mailbox. So with two users each holding one queued row, user B's contact
+    would receive an email built from user A's profile, A's résumé attached,
+    sent from A's mailbox -- and B's later Approve would fail silently
+    because the draft lives in A's mailbox, not B's.
+
+    Two real users, two real profiles (distinct résumé bytes), two real Gmail
+    identities, one queued row each: every create_draft call must be paired
+    with ITS OWN owner's creds and résumé, never the other user's.
+    """
+    from cold_email.auth.crypto import encrypt
+    from cold_email.database import ROLE_USER, Profile, User
+
+    user_a = User(email="usera@example.com", google_sub="sub-usera", role=ROLE_USER)
+    user_b = User(email="userb@example.com", google_sub="sub-userb", role=ROLE_USER)
+    async_session.add_all([user_a, user_b])
+    await async_session.commit()
+
+    user_a.gmail_refresh_token_enc = encrypt("rt-user-a")  # noqa: S106
+    user_a.gmail_sender_email = "mailbox-a@example.com"
+    user_b.gmail_refresh_token_enc = encrypt("rt-user-b")  # noqa: S106
+    user_b.gmail_sender_email = "mailbox-b@example.com"
+    await async_session.commit()
+
+    async_session.add_all(
+        [
+            Profile(
+                user_id=user_a.id,
+                name="User A",
+                intro="I am user A.",
+                experience_pool=["Acme: a thing"],
+                resume_pdf=b"%PDF-1.7\n" + b"A" * 2048,
+                resume_filename="user-a.pdf",
+            ),
+            Profile(
+                user_id=user_b.id,
+                name="User B",
+                intro="I am user B.",
+                experience_pool=["Globex: another thing"],
+                resume_pdf=b"%PDF-1.7\n" + b"B" * 2048,
+                resume_filename="user-b.pdf",
+            ),
+        ]
+    )
+    await async_session.commit()
+
+    await _add_queued_outreach(async_session, user_a.id, "AcmeCo", "contact-a@acmeco.com")
+    await _add_queued_outreach(async_session, user_b.id, "GlobexCo", "contact-b@globexco.com")
+
+    monkeypatch.setattr(
+        "cold_email.workers.drafting.drafting.draft_email",
+        lambda row, profile: {
+            "subject": f"Hi from {profile.name}",
+            "body": "Body",
+            "body_html": "<p>Body</p>",
+        },
+    )
+    monkeypatch.setattr("cold_email.workers.drafting.drafting.time.sleep", lambda *_: None)
+
+    from cold_email.workers.drafting.drafting import drafting_task
+
+    result = drafting_task()
+
+    assert result["drafted"] == 2
+    assert len(captured_drafts) == 2
+
+    by_recipient = {call["to"]: call for call in captured_drafts}
+    call_a = by_recipient["contact-a@acmeco.com"]
+    call_b = by_recipient["contact-b@globexco.com"]
+
+    assert call_a["creds"].sender_email == "mailbox-a@example.com"
+    assert call_a["attachment"][1] == b"%PDF-1.7\n" + b"A" * 2048
+
+    assert call_b["creds"].sender_email == "mailbox-b@example.com"
+    assert call_b["attachment"][1] == b"%PDF-1.7\n" + b"B" * 2048
+
+    # Never cross-paired: A's mailbox must not carry B's résumé or vice versa.
+    assert call_a["creds"].sender_email != call_b["creds"].sender_email
+    assert call_a["attachment"][1] != call_b["attachment"][1]
+
+
+@pytest.mark.asyncio
+async def test_one_users_missing_profile_does_not_block_another_users_draft(
+    async_session, sync_session_for, pending_views, monkeypatch
+):
+    """User A has no profile at all; user B does. B's row must still draft
+    this sweep, A's row must stay 'queued' (recoverable by completing the
+    profile, no manual DLQ retry), and neither user's skip should write a
+    dead-letter row."""
+    from sqlalchemy import func, select
+
+    from cold_email.auth.crypto import encrypt
+    from cold_email.database import (
+        OUTREACH_DRAFTED,
+        OUTREACH_QUEUED,
+        ROLE_USER,
+        DeadLetter,
+        Profile,
+        User,
+    )
+
+    user_a = User(email="noprofile@example.com", google_sub="sub-noprofile", role=ROLE_USER)
+    user_b = User(email="hasprofile@example.com", google_sub="sub-hasprofile", role=ROLE_USER)
+    async_session.add_all([user_a, user_b])
+    await async_session.commit()
+
+    # Only A gets Gmail connected -- irrelevant, since A's missing profile
+    # must be caught first, but keeps the scenario realistic.
+    user_a.gmail_refresh_token_enc = encrypt("rt-user-a")  # noqa: S106
+    user_a.gmail_sender_email = "mailbox-a@example.com"
+    user_b.gmail_refresh_token_enc = encrypt("rt-user-b")  # noqa: S106
+    user_b.gmail_sender_email = "mailbox-b@example.com"
+    await async_session.commit()
+
+    async_session.add(
+        Profile(
+            user_id=user_b.id,
+            name="User B",
+            intro="I am user B.",
+            experience_pool=["Globex: a thing"],
+            resume_pdf=b"%PDF-1.7\n" + b"B" * 2048,
+            resume_filename="user-b.pdf",
+        )
+    )
+    await async_session.commit()
+
+    outreach_a = await _add_queued_outreach(async_session, user_a.id, "NoProfileCo", "a@nop.com")
+    await _add_queued_outreach(async_session, user_b.id, "HasProfileCo", "b@hap.com")
+
+    monkeypatch.setattr(
+        "cold_email.workers.drafting.drafting.draft_email",
+        lambda row, profile: {"subject": "Hi", "body": "Body", "body_html": "<p>Body</p>"},
+    )
+    monkeypatch.setattr("cold_email.workers.drafting.drafting.time.sleep", lambda *_: None)
+    monkeypatch.setattr(
+        "cold_email.workers.drafting.drafting.create_draft", lambda creds, **kwargs: "gmail-fake"
+    )
+
+    from cold_email.workers.drafting.drafting import drafting_task
+
+    result = drafting_task()
+
+    assert result["drafted"] == 1
+    assert result["skipped"][user_a.id] == "no_profile"
+
+    await async_session.refresh(outreach_a)
+    assert outreach_a.status == OUTREACH_QUEUED
+
+    from cold_email.database import Outreach
+
+    outreach_b = (
+        await async_session.execute(select(Outreach).where(Outreach.user_id == user_b.id))
+    ).scalar_one()
+    assert outreach_b.status == OUTREACH_DRAFTED
+
+    assert (
+        await async_session.execute(select(func.count()).select_from(DeadLetter))
+    ).scalar_one() == 0

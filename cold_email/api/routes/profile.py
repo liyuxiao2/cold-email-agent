@@ -9,6 +9,7 @@ import logging
 from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile, status
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.concurrency import run_in_threadpool
 
 from cold_email.auth.deps import get_current_user
 from cold_email.database import Profile, User, get_async_session
@@ -34,6 +35,19 @@ class ProfileUpdate(BaseModel):
     website: str | None = None
     experience_pool: list[str] = Field(default_factory=list)
     company_links: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("name", "intro")
+    @classmethod
+    def strip_and_require_non_blank(cls, value: str) -> str:
+        """min_length=1 alone accepts " " — SenderProfile.first_name then does
+        `self.name.split()[0]` on a whitespace-only name, raising IndexError
+        and failing every row of the drafting sweep. Strip first so a
+        whitespace-only submission is rejected here (422) instead of reaching
+        the worker."""
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("must not be blank")
+        return stripped
 
     @field_validator("experience_pool")
     @classmethod
@@ -125,8 +139,18 @@ async def upload_resume(
             status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail=str(exc)
         ) from exc
 
+    # extract_text (pypdf, CPU-bound, up to 5MB of PDF) and suggest_profile
+    # (synchronous provider HTTP, which can walk the whole fallback chain on a
+    # 429) both block for real time. This is an `async def` route, so calling
+    # either directly would block the ONE event loop this uvicorn worker runs
+    # -- stalling every other in-flight request, including GET /api/health,
+    # for as long as parsing/the LLM call takes. This is the repo's first
+    # blocking-work-in-an-async-route call; any future blocking call
+    # (CPU-bound parsing, a synchronous HTTP client, etc.) added to an async
+    # route must go through run_in_threadpool (or asyncio.to_thread) the same
+    # way.
     try:
-        resume_text = extract_text(data)
+        resume_text = await run_in_threadpool(extract_text, data)
     except ResumeUnreadable as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
@@ -145,7 +169,7 @@ async def upload_resume(
     await session.commit()
 
     try:
-        suggested = suggest_profile(resume_text)
+        suggested = await run_in_threadpool(suggest_profile, resume_text)
     except Exception as exc:
         # The bytes ARE stored: the upload succeeded, only the suggestion
         # failed. Discarding a 5MB upload the user just waited for would be

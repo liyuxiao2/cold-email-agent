@@ -36,6 +36,32 @@ async def test_put_profile_rejects_an_empty_name(user_client, seeded_profile):
 
 
 @pytest.mark.asyncio
+async def test_put_profile_rejects_a_whitespace_only_name(user_client, seeded_profile):
+    """min_length=1 alone accepts " ". SenderProfile.first_name then does
+    `self.name.split()[0]` on it, raising IndexError and failing every row of
+    the drafting sweep -- this must 422 before it ever reaches the DB."""
+    response = await user_client.put("/api/profile", json={"name": "   ", "intro": "hi"})
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_put_profile_rejects_a_whitespace_only_intro(user_client, seeded_profile):
+    response = await user_client.put("/api/profile", json={"name": "Ada", "intro": "   "})
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_put_profile_strips_surrounding_whitespace(user_client, seeded_profile):
+    response = await user_client.put(
+        "/api/profile", json={"name": "  Ada Lovelace  ", "intro": "  hi there  "}
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["name"] == "Ada Lovelace"
+    assert body["intro"] == "hi there"
+
+
+@pytest.mark.asyncio
 async def test_upload_over_the_cap_is_413(user_client, seeded_profile):
     from cold_email.resume_store import MAX_RESUME_BYTES
 

@@ -34,6 +34,7 @@ from cold_email.workers.drafting.constants import DRAFTING, ERR_EMPTY_DRAFT, ERR
 from cold_email.workers.drafting.helpers.db_helpers import (
     commit_draft,
     fetch_pending_drafts,
+    fetch_pending_user_ids,
 )
 from cold_email.workers.drafting.helpers.generation import draft_email
 from cold_email.workers.shared.constants import (
@@ -148,92 +149,124 @@ def bridge_queue_admin_outreach() -> int:
 def drafting_task(self) -> dict:
     """Draft an email for every outreach row currently in pending_drafts.
 
-    Two preflight checks abort the WHOLE sweep before any row is touched — a
-    missing profile or disconnected Gmail cannot be fixed by trying another
-    lead, so rows are left at 'queued' with no dead-letter row. Completing the
-    profile or reconnecting Gmail makes the next sweep pick them up with no
-    manual DLQ retry.
+    pending_drafts has no user filter of its own (`WHERE o.status =
+    'queued'`, across every tenant), so the sweep groups work by user itself:
+    read the distinct user_ids with queued rows, then for EACH user load
+    their own SenderContext and draft only THEIR rows. One user's missing
+    profile or disconnected Gmail skips only that user — it must never
+    abort, or use another user's mailbox for, anyone else's rows. That
+    cross-tenant mix-up (one user's contact receiving an email built from a
+    different user's profile, résumé, and Gmail mailbox) is exactly the bug
+    this grouping exists to prevent.
 
-    Once past preflight, two failure classes are handled differently per row
-    so one bad row never aborts the rest of the sweep:
+    NOTE: the Celery task signature stays `drafting_task()` — the Beat
+    schedule and bridge_queue_admin_outreach both call it with no arguments.
+    Stack 3 deletes the bridge and narrows this to `drafting_task(user_id)`,
+    one user per dispatch; the per-user grouping here is the interim shape
+    until then.
+
+    Per-user preflight (missing profile / disconnected Gmail) leaves that
+    user's rows at 'queued' with no dead-letter row — neither problem can be
+    fixed by trying another row, and completing the profile or reconnecting
+    Gmail should make the next sweep pick them up with no manual DLQ retry.
+    Other users' rows are unaffected and still drafted this sweep.
+
+    Once past a user's preflight, two failure classes are handled differently
+    per row so one bad row never aborts the rest of that user's batch (or any
+    other user's):
       * Terminal (no contact email, empty model output) → fail_outreach marks
         the row 'failed'. It leaves the 'queued' state, drops out of
         pending_drafts, and won't be retried on the next sweep.
       * Transient (LLM/Gmail network hiccup) → handle_transient_failure logs
         and leaves the row at 'queued'. The next Beat sweep retries it.
 
-    autoretry_for only fires for errors *outside* the loop (e.g. the initial
-    pending_drafts read), never for a single row — those are caught here.
+    autoretry_for only fires for errors *outside* the per-row loop (e.g. the
+    initial pending_drafts read), never for a single row — those are caught
+    here.
+
+    Returns a per-user summary: `drafted` is the total count across all
+    users; `skipped` maps user_id -> reason ("no_profile" /
+    "gmail_disconnected") for users whose whole batch was skipped this sweep.
     """
     # TEMPORARY (Stack 1b): see bridge_queue_admin_outreach. Remove in Stack 3.
     bridge_queue_admin_outreach()
 
-    pending = fetch_pending_drafts()
-    if not pending:
-        return {"status": "success", "drafted": 0}
-
-    # Sweeps are single-user until Stack 3 makes drafting_task(user_id).
-    user_id = pending[0].user_id
-    with get_sync_session() as session:
-        context, reason = load_sender_context(session, user_id)
-        # load_sender_context only reads. Commit rather than let the session
-        # exit with a still-open transaction — an idle read transaction is a
-        # connection-pool liability, and it would otherwise hold locks (e.g.
-        # on pending_drafts, read a moment ago) for as long as the session
-        # lives.
-        session.commit()
-
-    if context is None:
-        # Leave rows at 'queued' and write NO dead-letter row: completing the
-        # profile or reconnecting Gmail should make these drafts happen with no
-        # manual retry.
-        logger.warning(f"Sweep aborted for user {user_id}: {reason}")
-        return {"status": reason, "drafted": 0}
+    user_ids = fetch_pending_user_ids()
+    if not user_ids:
+        return {"status": "success", "drafted": 0, "skipped": {}}
 
     drafted = 0
-    for row in pending:
-        outreach_id = row.outreach_id
+    skipped: dict[str, str] = {}
 
-        if not row.contact_email:
-            fail_outreach(
-                outreach_id,
-                ERR_NO_CONTACT_EMAIL,
-                stage=DRAFTING,
-                task_name="cold_email.workers.drafting.drafting_task",
-            )
+    for user_id in user_ids:
+        pending = fetch_pending_drafts(user_id)
+        if not pending:
             continue
 
-        try:
-            draft = draft_email(row, context.profile)
-            time.sleep(LLM_MIN_INTERVAL_SECONDS)
+        # Read profile/résumé/Gmail creds ONCE per user, not per row: the
+        # résumé bytes cross the DB connection on every read, so a 40-lead
+        # sweep for one user would otherwise pull ~16MB out of Cloud SQL to
+        # attach the same file 40 times.
+        with get_sync_session() as session:
+            context, reason = load_sender_context(session, user_id)
+            # load_sender_context only reads. Commit rather than let the
+            # session exit with a still-open transaction — an idle read
+            # transaction is a connection-pool liability, and it would
+            # otherwise hold locks (e.g. on pending_drafts, read a moment
+            # ago) for as long as the session lives.
+            session.commit()
 
-            if not draft.get("subject") or not draft.get("body"):
+        if context is None:
+            # Leave this user's rows at 'queued' and write NO dead-letter
+            # row: completing the profile or reconnecting Gmail should make
+            # these drafts happen with no manual retry. Other users continue.
+            logger.warning(f"Sweep skipped for user {user_id}: {reason}")
+            skipped[user_id] = reason
+            continue
+
+        for row in pending:
+            outreach_id = row.outreach_id
+
+            if not row.contact_email:
                 fail_outreach(
                     outreach_id,
-                    ERR_EMPTY_DRAFT,
+                    ERR_NO_CONTACT_EMAIL,
                     stage=DRAFTING,
                     task_name="cold_email.workers.drafting.drafting_task",
                 )
                 continue
 
-            gmail_draft_id = create_draft(
-                context.creds,
-                to=row.contact_email,
-                subject=draft["subject"],
-                body=draft["body"],
-                html=draft.get("body_html"),
-                attachment=context.attachment,
-            )
-            commit_draft(
-                outreach_id=outreach_id,
-                subject_line=draft["subject"],
-                body=draft["body"],
-                gmail_draft_id=gmail_draft_id,
-            )
-            update_outreach_status(outreach_id, OUTREACH_DRAFTED)
-            drafted += 1
+            try:
+                draft = draft_email(row, context.profile)
+                time.sleep(LLM_MIN_INTERVAL_SECONDS)
 
-        except Exception as exc:
-            handle_transient_failure(outreach_id, exc)
+                if not draft.get("subject") or not draft.get("body"):
+                    fail_outreach(
+                        outreach_id,
+                        ERR_EMPTY_DRAFT,
+                        stage=DRAFTING,
+                        task_name="cold_email.workers.drafting.drafting_task",
+                    )
+                    continue
 
-    return {"status": "success", "drafted": drafted}
+                gmail_draft_id = create_draft(
+                    context.creds,
+                    to=row.contact_email,
+                    subject=draft["subject"],
+                    body=draft["body"],
+                    html=draft.get("body_html"),
+                    attachment=context.attachment,
+                )
+                commit_draft(
+                    outreach_id=outreach_id,
+                    subject_line=draft["subject"],
+                    body=draft["body"],
+                    gmail_draft_id=gmail_draft_id,
+                )
+                update_outreach_status(outreach_id, OUTREACH_DRAFTED)
+                drafted += 1
+
+            except Exception as exc:
+                handle_transient_failure(outreach_id, exc)
+
+    return {"status": "success", "drafted": drafted, "skipped": skipped}
