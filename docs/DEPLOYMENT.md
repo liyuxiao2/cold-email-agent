@@ -68,10 +68,17 @@ This guide provides instructions for deploying the **Cold Email Agent** backend 
    ```
 
 3. **Set backend environment secrets**:
+
+   > ⚠️ **Use `--update-env-vars`, never `--set-env-vars`, on a running service.**
+   > `--set-env-vars` *replaces the entire env-var set* with exactly what you
+   > pass — every variable you omit (`DATABASE_URL`, `CELERY_BROKER_URL`, every
+   > API key, ...) is deleted, which takes the service down. `--update-env-vars`
+   > merges instead of replacing.
+
    ```bash
    gcloud run services update cold-email-backend \
        --region us-central1 \
-       --set-env-vars DATABASE_URL="<YOUR_ASYNC_POSTGRES_URL>",CELERY_BROKER_URL="<YOUR_REDIS_URL>",GEMINI_API_KEY="<KEY>",GROQ_API_KEY="<KEY>",FIRECRAWL_API_KEY="<KEY>",HUNTER_API_KEY="<KEY>"
+       --update-env-vars DATABASE_URL="<YOUR_ASYNC_POSTGRES_URL>",CELERY_BROKER_URL="<YOUR_REDIS_URL>",GEMINI_API_KEY="<KEY>",GROQ_API_KEY="<KEY>",FIRECRAWL_API_KEY="<KEY>",HUNTER_API_KEY="<KEY>"
    ```
 
 4. **Create the two auth secrets in Secret Manager** and wire them into Cloud Run:
@@ -82,8 +89,10 @@ This guide provides instructions for deploying the **Cold Email Agent** backend 
      gcloud secrets create encryption-key --data-file=-
 
    gcloud run deploy cold-email-backend \
+     --image=us-central1-docker.pkg.dev/<YOUR_GCP_PROJECT_ID>/cold-email-repo/cold-email-backend:latest \
+     --region us-central1 \
      --update-secrets=SESSION_SECRET=session-secret:latest,ENCRYPTION_KEY=encryption-key:latest \
-     --set-env-vars=GOOGLE_REDIRECT_URI=https://<backend>/api/auth/google/callback,FRONTEND_URL=https://your-app.vercel.app,ADMIN_EMAIL=you@company.com,COOKIE_SECURE=true
+     --update-env-vars=GOOGLE_REDIRECT_URI=https://<backend>/api/auth/google/callback,FRONTEND_URL=https://your-app.vercel.app,ADMIN_EMAIL=you@company.com,COOKIE_SECURE=true,CORS_ORIGINS='["https://your-app.vercel.app"]'
    ```
    ⚠️ **Back up the `encryption-key` secret's value before any user signs in.**
    It cannot be recovered from Secret Manager metadata alone if the version is
