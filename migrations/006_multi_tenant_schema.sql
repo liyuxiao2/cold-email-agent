@@ -292,6 +292,14 @@ BEGIN
 END $$;
 
 -- ==================================================================== VIEWS
+-- These three views are ALSO defined in migrations/views.sql, applied on
+-- every container boot after Base.metadata.create_all (see scripts/start.sh),
+-- because create_all does not provision views at all — see R23 in
+-- views.sql's header. That is intentional duplication, not drift to clean up:
+-- this migration only ever runs once against a fresh pre-006 database, so a
+-- migration-only provisioning path still needs its own copy. CREATE OR
+-- REPLACE VIEW in views.sql makes re-declaring these harmless, so do NOT
+-- delete either copy — that breaks whichever provisioning path relied on it.
 CREATE VIEW pending_drafts AS
 SELECT DISTINCT ON (o.id)
     o.id            AS outreach_id,
