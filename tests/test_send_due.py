@@ -26,6 +26,51 @@ async def test_dispatches_null_and_past_schedules(
 
 
 @pytest.mark.asyncio
+async def test_one_failed_dispatch_does_not_strand_the_rest_of_the_batch(
+    async_session, approved_outreach_factory, sync_session_for, monkeypatch
+):
+    """A Redis hiccup on one row's .delay() must not abort dispatch for the
+    other claimed rows, and the row whose dispatch failed must be released
+    back to 'approved' immediately -- nothing was sent for it, so there is no
+    reason to make it wait 30-90 minutes for reap_stuck_sends to dead-letter
+    it as 'outcome unknown'."""
+    from cold_email.database import OUTREACH_APPROVED, OUTREACH_SENDING
+
+    outreach_a = await approved_outreach_factory(scheduled_send_at=None)
+    outreach_b = await approved_outreach_factory(scheduled_send_at=None)
+    outreach_c = await approved_outreach_factory(scheduled_send_at=None)
+
+    dispatched = []
+
+    def flaky_delay(oid):
+        if oid == str(outreach_b.id):
+            raise ConnectionError("broker unreachable")
+        dispatched.append(oid)
+
+    monkeypatch.setattr(
+        "cold_email.workers.logistics.logistics.logistics_task",
+        type("T", (), {"delay": staticmethod(flaky_delay)}),
+    )
+
+    from cold_email.workers.logistics.logistics import send_due_task
+
+    result = send_due_task()
+
+    assert result["dispatched"] == 2
+    assert str(outreach_a.id) in dispatched
+    assert str(outreach_c.id) in dispatched
+    assert str(outreach_b.id) not in dispatched
+
+    await async_session.refresh(outreach_a)
+    await async_session.refresh(outreach_b)
+    await async_session.refresh(outreach_c)
+    assert outreach_a.status == OUTREACH_SENDING
+    assert outreach_c.status == OUTREACH_SENDING
+    # Released back to 'approved', not stranded at 'sending'.
+    assert outreach_b.status == OUTREACH_APPROVED
+
+
+@pytest.mark.asyncio
 async def test_overlapping_scans_dispatch_each_row_exactly_once(
     async_session, approved_outreach_factory, sync_session_for, monkeypatch
 ):

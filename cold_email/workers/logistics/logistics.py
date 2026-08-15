@@ -9,7 +9,12 @@ Three tasks:
     logistics_task for exactly the ids that UPDATE actually returned. Celery
     guarantees at-least-once TASK delivery, so a scanner over rows that only
     leave the set on success would eventually dispatch the same row twice --
-    a cold email delivered twice to a founder cannot be undone.
+    a cold email delivered twice to a founder cannot be undone. A row whose
+    *dispatch* itself fails (a broker blip on `.delay()`) is released back
+    to 'approved' immediately, inside a `try`/`except` around each row -- one
+    bad dispatch no longer aborts the whole batch or strands the rest of it
+    at 'sending' for reap_stuck_sends to dead-letter 30-90 minutes later as
+    "outcome unknown" for emails that were never attempted.
   * logistics_task — sends ONE claimed draft, then advances it to 'sent'.
     Guards against a duplicate delivery of the SAME dispatch (Celery's
     at-least-once task delivery) by atomically consuming the draft's
@@ -32,7 +37,7 @@ from celery import shared_task
 from googleapiclient.errors import HttpError
 
 from cold_email.auth.gmail_creds import resolve_gmail_credentials
-from cold_email.database import OUTREACH_SENDING, OUTREACH_SENT
+from cold_email.database import OUTREACH_APPROVED, OUTREACH_SENDING, OUTREACH_SENT
 from cold_email.workers.logistics.constants import (
     ERR_GMAIL_DISCONNECTED,
     ERR_NO_GMAIL_DRAFT,
@@ -74,12 +79,24 @@ def send_due_task() -> dict:
     """
     claimed = claim_due_sends()
 
+    dispatched = 0
     for outreach_id in claimed:
-        logistics_task.delay(outreach_id)
+        try:
+            logistics_task.delay(outreach_id)
+            dispatched += 1
+        except Exception as exc:
+            # claim_due_sends only flipped approved -> sending; send_draft was
+            # never called for this row, so releasing it back to 'approved'
+            # is always safe -- the next tick (5 minutes away) reclaims it
+            # cleanly. Same precedent as create_outreach / regenerate
+            # wrapping drafting_task.delay() (cold_email/api/routes/
+            # outreach.py): one failed dispatch must not strand the row.
+            logger.warning(f"Could not dispatch logistics_task for {outreach_id}: {exc}")
+            update_outreach_status(outreach_id, OUTREACH_APPROVED)
 
-    if claimed:
-        logger.info(f"Claimed and dispatched {len(claimed)} due send(s)")
-    return {"status": "success", "dispatched": len(claimed)}
+    if dispatched:
+        logger.info(f"Claimed and dispatched {dispatched} due send(s)")
+    return {"status": "success", "dispatched": dispatched}
 
 
 @shared_task(name="cold_email.workers.logistics.reap_stuck_sends")
