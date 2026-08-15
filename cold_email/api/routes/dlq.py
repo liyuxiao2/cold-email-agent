@@ -94,7 +94,6 @@ async def retry_dead_letter(
     written back to the DLQ by handle_terminal_failure, so the queue self-cleans.
     """
     from cold_email.workers.drafting import drafting_task
-    from cold_email.workers.logistics import logistics_task
     from cold_email.workers.research import research_task
 
     stmt = select(DeadLetter)
@@ -140,7 +139,6 @@ async def retry_dead_letter(
                     "(company-anchored only); skipping instead of deleting"
                 )
                 continue
-            outreach_id = str(dl.outreach_id)
             outreach = await session.get(Outreach, dl.outreach_id)
             if outreach is not None:
                 outreach.status = reset_status
@@ -158,8 +156,12 @@ async def retry_dead_letter(
                         f"DLQ row {dl.id} (stage=drafting) has no matching outreach "
                         "row; cannot determine which user's sweep to re-dispatch"
                     )
-            else:
-                logistics_task.delay(outreach_id)
+            # No direct logistics_task.delay() here: the row is reset to
+            # 'approved' above, and send_due_task's Beat scan (every 5
+            # minutes) claims it from there. Dispatching directly would
+            # bypass the claim-before-dispatch guard (row still 'approved',
+            # not yet 'sending') and reintroduce the double-send risk the
+            # claim exists to prevent.
 
         retried += 1
 
