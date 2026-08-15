@@ -19,6 +19,7 @@ import {
   PipelineStats as PipelineStatsData,
   ScheduledItem,
   approveOutreach,
+  bulkApprove,
   deleteCadence,
   fetchDraftQueue,
   fetchPipelineStats,
@@ -56,6 +57,7 @@ export default function DashboardPage() {
   const [draftQueue, setDraftQueue] = useState<OutreachItem[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [bulkApproving, setBulkApproving] = useState<boolean>(false);
   const [triggeringDiscovery, setTriggeringDiscovery] = useState<boolean>(false);
   const [triggeringDrafting, setTriggeringDrafting] = useState<boolean>(false);
   const [notification, setNotification] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
@@ -104,14 +106,31 @@ export default function DashboardPage() {
   /** Renders how the send time is displayed for the toast and the scheduled
    * queue: the cadence's own timezone if one is configured, otherwise the
    * browser's -- always with a UTC offset alongside so a bare local time is
-   * never ambiguous. */
-  const formatInDisplayTz = (iso: string) =>
-    new Intl.DateTimeFormat('en-US', {
-      timeZone: cadence?.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
+   * never ambiguous. Same `timeZoneName: 'shortOffset'` approach as
+   * ScheduledQueue.tsx's formatScheduled: Intl.DateTimeFormat's `format()`
+   * silently drops any option it doesn't recognize for the given style
+   * combination, so the offset has to come from a second, explicit
+   * formatToParts() call rather than just adding the option to the call
+   * above. */
+  const formatInDisplayTz = (iso: string) => {
+    const timeZone = cadence?.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const date = new Date(iso);
+    const body = new Intl.DateTimeFormat('en-US', {
+      timeZone,
       weekday: 'short',
       hour: 'numeric',
       minute: '2-digit',
-    }).format(new Date(iso));
+    }).format(date);
+
+    const offsetPart = new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      timeZoneName: 'shortOffset',
+    })
+      .formatToParts(date)
+      .find((part) => part.type === 'timeZoneName');
+
+    return offsetPart ? `${body} (${offsetPart.value})` : body;
+  };
 
   useEffect(() => {
     if (authLoading) return;
@@ -129,14 +148,14 @@ export default function DashboardPage() {
 
   /** Bumps the per-user `outreach` half of stats; `companies` is untouched —
       these actions never change the global research pool. */
-  const bumpOutreachStats = (from: string, to: string) => {
+  const bumpOutreachStats = (from: string, to: string, count = 1) => {
     if (!stats) return;
     setStats({
       ...stats,
       outreach: {
         ...stats.outreach,
-        [from]: Math.max(0, (stats.outreach[from] ?? 0) - 1),
-        [to]: (stats.outreach[to] ?? 0) + 1,
+        [from]: Math.max(0, (stats.outreach[from] ?? 0) - count),
+        [to]: (stats.outreach[to] ?? 0) + count,
       },
     });
   };
@@ -189,6 +208,34 @@ export default function DashboardPage() {
       return false;
     } finally {
       setActionLoading(null);
+    }
+  };
+
+  /** Approves every drafted lead currently in the review queue in ONE call,
+   * so the cadence walk spreads them across slots instead of approving one
+   * at a time and giving each the same next-free slot -- the thing that
+   * makes cadence usable at volume. `bulkApprove` can partially skip rows
+   * that changed out from under it (already targeted, quota, etc.), so this
+   * only removes the ones the backend actually reports as approved. */
+  const handleApproveAll = async () => {
+    if (draftQueue.length === 0) return;
+    const ids = draftQueue.map((lead) => lead.outreach_id);
+    try {
+      setBulkApproving(true);
+      const result = await bulkApprove(ids);
+      const approvedIds = new Set(result.approved.map((a) => a.outreach_id));
+      setDraftQueue((prev) => prev.filter((item) => !approvedIds.has(item.outreach_id)));
+      if (approvedIds.size > 0) bumpOutreachStats('drafted', 'approved', approvedIds.size);
+      showNotification(
+        result.skipped > 0
+          ? `Approved ${approvedIds.size}, skipped ${result.skipped}.`
+          : `Approved ${approvedIds.size} draft${approvedIds.size === 1 ? '' : 's'}.`
+      );
+      loadScheduling();
+    } catch (err: unknown) {
+      showNotification(`Failed to approve all: ${errorMessage(err)}`, 'error');
+    } finally {
+      setBulkApproving(false);
     }
   };
 
@@ -515,6 +562,8 @@ export default function DashboardPage() {
         actionLoading={actionLoading}
         onApprove={handleApprove}
         onApproveScheduled={handleApproveScheduled}
+        onApproveAll={handleApproveAll}
+        bulkApproving={bulkApproving}
         onReject={handleReject}
         onRegenerate={handleRegenerate}
         onTriggerDiscovery={handleTriggerDiscovery}

@@ -25,6 +25,12 @@ interface ReviewDeckProps {
    * for "send now" (overrides any cadence). Resolves true on success so the
    * dialog only closes then. */
   onApproveScheduled: (lead: OutreachItem, whenIso: string | null) => Promise<boolean>;
+  /** Approves every lead currently in the queue in one call, so a cadence
+   * walk spreads them across slots instead of stacking one-at-a-time
+   * approvals on the same next-free slot -- the thing that makes cadence
+   * usable at volume. */
+  onApproveAll: () => void;
+  bulkApproving: boolean;
   /** Resolves true when the rejection succeeded, so the modal only closes then. */
   onReject: (outreachId: string, notes: string) => Promise<boolean>;
   onRegenerate: (lead: OutreachItem) => void;
@@ -45,6 +51,8 @@ export default function ReviewDeck({
   actionLoading,
   onApprove,
   onApproveScheduled,
+  onApproveAll,
+  bulkApproving,
   onReject,
   onRegenerate,
   onTriggerDiscovery,
@@ -124,6 +132,25 @@ export default function ReviewDeck({
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+            <button
+              onClick={onApproveAll}
+              disabled={bulkApproving || actionLoading !== null}
+              style={{
+                padding: '8px 16px',
+                borderRadius: '8px',
+                backgroundColor: 'var(--accent-primary)',
+                color: '#fff',
+                border: 'none',
+                fontWeight: 600,
+                fontSize: '0.85rem',
+                cursor: bulkApproving || actionLoading !== null ? 'not-allowed' : 'pointer',
+                opacity: bulkApproving || actionLoading !== null ? 0.6 : 1,
+              }}
+            >
+              {bulkApproving ? 'Approving...' : `Approve all (${leads.length})`}
+            </button>
+          </div>
           {leads.map((lead) => (
             <div
               key={lead.outreach_id}

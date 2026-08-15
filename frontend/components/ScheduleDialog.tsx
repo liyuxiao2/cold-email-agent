@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Calendar, X } from 'lucide-react';
 
 interface ScheduleDialogProps {
@@ -28,6 +28,14 @@ export default function ScheduleDialog({
   onConfirm,
 }: ScheduleDialogProps) {
   const [localValue, setLocalValue] = useState<string>('');
+
+  // `if (!open) return null` below only skips rendering -- it does not
+  // unmount the component, so localValue would otherwise survive a close and
+  // reappear pre-filled the next time this dialog opens for a DIFFERENT
+  // company. Reset on every open so each company starts from a blank input.
+  useEffect(() => {
+    if (open) setLocalValue('');
+  }, [open]);
 
   if (!open) return null;
 

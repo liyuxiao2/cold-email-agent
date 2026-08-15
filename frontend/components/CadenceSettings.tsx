@@ -109,13 +109,26 @@ function previewNextSlots(cadence: Cadence, count: number): Date[] {
   return results;
 }
 
+/** "Mon, 9:00 AM (UTC-4)" -- the zone's own offset alongside the time, same
+ * as ScheduledQueue.tsx's formatScheduled: a bare local time is ambiguous
+ * without one, and this preview's whole point is showing the user exactly
+ * when a slot lands. */
 function formatSlot(date: Date, timeZone: string): string {
-  return new Intl.DateTimeFormat('en-US', {
+  const body = new Intl.DateTimeFormat('en-US', {
     timeZone,
     weekday: 'short',
     hour: 'numeric',
     minute: '2-digit',
   }).format(date);
+
+  const offsetPart = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    timeZoneName: 'shortOffset',
+  })
+    .formatToParts(date)
+    .find((part) => part.type === 'timeZoneName');
+
+  return offsetPart ? `${body} (${offsetPart.value})` : body;
 }
 
 /** Preview of the next few sends a draft cadence would produce -- a
