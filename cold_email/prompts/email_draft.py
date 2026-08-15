@@ -9,8 +9,6 @@ from the resume. Everything else is filled deterministically.
 
 from pydantic import BaseModel, Field
 
-RECIPIENT_TITLE = "Founder"  # startups.gallery leads are founders; no title column upstream.
-
 EMAIL_DRAFT_SYSTEM = (
     "You fill the contextual slots of a fixed candidate-outreach email a software "
     "engineer sends to a startup founder. You do NOT write the whole email — only "
@@ -52,16 +50,24 @@ class EmailDraftContext(BaseModel):
 
 
 def build_email_draft_messages(
-    founder_name: str,
+    recipient_name: str,
+    recipient_position: str | None,
     company_name: str,
     tech_stack: list[str],
     recent_news: str,
     hook: str,
     resume_text: str,
 ) -> str:
-    """Build the drafting prompt: company research + the sender's full resume."""
+    """Build the drafting prompt: company research + the sender's full resume.
+
+    `recipient_position` comes from company_contacts.position. It replaces a
+    hardcoded "Founder" — after contact spreading, the recipient is frequently
+    a CTO or a head of engineering, and telling the model otherwise produces
+    copy addressed to the wrong role.
+    """
+    position = recipient_position or "Founder"
     return (
-        f"Company: {company_name} (recipient: {founder_name}, {RECIPIENT_TITLE})\n"
+        f"Company: {company_name} (recipient: {recipient_name}, {position})\n"
         f"What they're building / recent news: {recent_news}\n"
         f"Why their work is compelling: {hook}\n"
         f"Their tech stack: {', '.join(tech_stack)}\n\n"

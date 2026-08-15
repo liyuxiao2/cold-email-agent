@@ -43,8 +43,13 @@ def generate_email(row: PendingDraft) -> str:
     Provider/model fallback is handled inside generate_json.
     """
     tech_stack = [row.tech_stack] if isinstance(row.tech_stack, str) else (row.tech_stack or [])
+    recipient_name = " ".join(
+        part for part in (row.contact_first_name, getattr(row, "contact_last_name", None)) if part
+    ) or (row.founder_name or "there")
+
     messages = build_email_draft_messages(
-        founder_name=row.founder_name or "there",
+        recipient_name=recipient_name,
+        recipient_position=row.contact_position,
         company_name=row.company_name,
         tech_stack=tech_stack,
         recent_news=row.recent_news or "",
@@ -92,7 +97,9 @@ def assemble_email(context: dict, row: PendingDraft, profile: SenderProfile) -> 
         return {}
 
     bullets = "\n".join(_bullet_md(b, profile) for b in context["tailored_bullets"])
-    first_name = row.founder_name.split()[0] if row.founder_name else "there"
+    # The CONTACT's first name, not the company's founder. Addressing the CTO
+    # by the founder's name is the most visible way this could embarrass a user.
+    first_name = row.contact_first_name or "there"
     values = {
         "first_name": first_name,
         "intro": context["intro"],
