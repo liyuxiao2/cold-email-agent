@@ -198,7 +198,10 @@ async def get_draft_review_queue(
 async def list_outreach(
     status: str | None = Query(
         None,
-        description="Filter by status (queued, drafted, approved, sent, rejected, failed)",
+        description=(
+            "Filter by status (queued, drafting, drafted, approved, sending, "
+            "sent, rejected, failed)"
+        ),
     ),
     search: str | None = Query(None, description="Search company or founder name"),
     limit: int = Query(50, ge=1, le=200),

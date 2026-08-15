@@ -122,6 +122,30 @@ async def test_stats_outreach_is_scoped_to_caller(async_session, user_client, ot
 
 
 @pytest.mark.asyncio
+async def test_stats_breakdown_sums_to_total_with_a_drafting_row(async_session, user_client):
+    """Fix 6: a row mid-'drafting' (drafting_task's claim, between 'queued'
+    and 'drafted') used to be dropped by _OUTREACH_STATUSES -- present in the
+    total but absent from every bucket, so the breakdown silently didn't sum
+    to it while a sweep was in flight."""
+    from sqlalchemy import select
+
+    from cold_email.database import OUTREACH_DRAFTING, Company, Outreach, User
+
+    user = (
+        await async_session.execute(select(User).where(User.email == "user@example.com"))
+    ).scalar_one()
+    company = Company(company_name="MidDraftCo")
+    async_session.add(company)
+    await async_session.commit()
+    async_session.add(Outreach(user_id=user.id, company_id=company.id, status=OUTREACH_DRAFTING))
+    await async_session.commit()
+
+    body = (await user_client.get("/api/pipeline/stats")).json()
+    assert body["outreach"]["drafting"] == 1
+    assert sum(v for k, v in body["outreach"].items() if k != "total") == body["outreach"]["total"]
+
+
+@pytest.mark.asyncio
 async def test_list_outreach_includes_company_and_contact(user_client, own_outreach):
     response = await user_client.get("/api/outreach")
 

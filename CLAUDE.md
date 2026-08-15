@@ -54,7 +54,7 @@ The entire production stack runs 24/7 in Google Cloud and Vercel:
 | **Frontend Dashboard** | [https://cold-email-puce-nine.vercel.app](https://cold-email-puce-nine.vercel.app) | Live Next.js review deck, approvals & company explorer |
 | **Backend REST API** | [https://cold-email-backend-426138953095.us-central1.run.app](https://cold-email-backend-426138953095.us-central1.run.app) | Cloud Run FastAPI backend |
 | **Health Check** | [`/api/health`](https://cold-email-backend-426138953095.us-central1.run.app/api/health) | API & Cloud SQL database connectivity check — PUBLIC, no auth (Cloud Run's health check calls it) |
-| **Pipeline Stats** | [`/api/pipeline/stats`](https://cold-email-backend-426138953095.us-central1.run.app/api/pipeline/stats) | Two dicts: `companies` (by `research_status`, GLOBAL) and `outreach` (by `status` — `queued`, `drafted`, `approved`, `sending`, `sent`, `rejected`, `failed` — filtered to the caller) |
+| **Pipeline Stats** | [`/api/pipeline/stats`](https://cold-email-backend-426138953095.us-central1.run.app/api/pipeline/stats) | Two dicts: `companies` (by `research_status`, GLOBAL) and `outreach` (by `status` — `queued`, `drafting`, `drafted`, `approved`, `sending`, `sent`, `rejected`, `failed` — filtered to the caller) |
 | **Company Pool** | `GET /api/companies` | Read-only global company pool, filtered (industry, funding stage, headcount, search, founder-reachable) and with companies the CALLER already targeted excluded — never returns an address, only `contact_count` / `has_founder_contact` |
 | **Company Detail** | `GET /api/companies/{id}` | One company with full research and contact SUMMARIES (`first_name`, `position`, `is_founder`) — still no addresses |
 | **Create Outreach** | `POST /api/outreach` | Queues drafts for the caller's selected `company_ids`; partial success (`created` / `skipped`, see Contact Spreading and Rate Limiting & Quota below), dispatches `drafting_task(user_id)` once for the batch |
@@ -255,22 +255,51 @@ dataclass a worker actually uses from that row.
      from its candidate set on success would eventually dispatch the same
      send twice, and a cold email delivered twice to a founder cannot be
      undone. See **Scheduling & Cadence** for why this matters more than it
-     looks.
-   - **`logistics_task(outreach_id)`** sends ONE claimed draft. It re-checks
-     the row is still `'sending'` before calling `send_draft` — the SECOND
-     guard, catching a duplicate Celery delivery of the same dispatch rather
-     than a second scan — then sends via Gmail API and advances the row to
-     `status = 'sent'`. A row already past `'sending'` (e.g. a redelivered
-     task) is a no-op, not an error.
-   - **`reap_stuck_sends`** (Celery Beat, hourly) dead-letters any row still
-     `'sending'` after `STUCK_SENDING_MINUTES` (30) — a worker crashed
-     mid-send and never reached `'sent'` or `'failed'`, so its outcome is
-     unknown. Unlike the `drafting` reclaim path (which retries automatically
-     — see the DLQ section below), this is **surfaced, never auto-retried**:
-     no email has left the building when a `drafting` claim strands, but a
-     stranded `sending` claim might already have delivered, and retrying a
-     send whose outcome is unknown is exactly how a double-send happens. A
-     human verifies the mailbox, then retries via `POST /api/dlq/retry`.
+     looks. A row whose *dispatch* itself fails (a broker blip on `.delay()`)
+     is released back to `'approved'` immediately, inside a `try`/`except`
+     around each row — one bad dispatch no longer aborts the whole batch or
+     strands the rest of it at `'sending'` for `reap_stuck_sends` to
+     dead-letter 30-90 minutes later as "outcome unknown" for emails that
+     were never attempted.
+   - **`logistics_task(outreach_id)`** sends ONE claimed draft, then advances
+     it to `status = 'sent'`. Two claims guard it: `send_due_task`'s claim
+     above (`approved` → `sending`) stops two overlapping *scans* from
+     dispatching the same row; a second, independent claim inside
+     `logistics_task` atomically nulls the draft's `gmail_draft_id` before
+     calling `send_draft`, stopping two *concurrent executions of the same
+     dispatch* (a redelivered Celery message) from both reaching Gmail — a
+     bare `status == 'sending'` re-check is read-then-act, not atomic, since
+     both executions would read `'sending'` before either advances it.
+     Nothing past that claim ever re-raises: a definitive Gmail rejection
+     (e.g. a 404 — the draft was deleted by hand) still fails the row via
+     `fail_outreach`, but anything else after the ticket is claimed (a
+     non-`HttpError` exception from `send_draft`, or the follow-up
+     `status = 'sent'` write itself failing) is dead-lettered as **outcome
+     unknown** — never marked `'failed'` (the email may already be gone) and
+     never retried (autoretry only ever fires for genuinely pre-send
+     failures, which can't have touched Gmail yet).
+   - **`reap_stuck_sends`** (Celery Beat, hourly) dead-letters two shapes,
+     neither auto-retried:
+     1. Any row still `'sending'` after `STUCK_SENDING_MINUTES` (30) — a
+        worker crashed mid-send and never reached `'sent'` or `'failed'`, so
+        its outcome is unknown. Unlike the `drafting` reclaim path (which
+        retries automatically — see the DLQ section below), this is
+        **surfaced, never auto-retried**: no email has left the building when
+        a `drafting` claim strands, but a stranded `sending` claim might
+        already have delivered, and retrying a send whose outcome is unknown
+        is exactly how a double-send happens. A human verifies the mailbox,
+        then retries via `POST /api/dlq/retry`.
+     2. A due (or unscheduled) `'approved'` row `pending_sends` can never
+        surface — a NULL `contact_id` (`company_contacts` is `ON DELETE SET
+        NULL`) or a missing `drafts` row both make its INNER JOINs drop the
+        row, so `claim_due_sends` (which selects FROM `pending_sends`) can
+        never claim it and nothing else watches `'approved'`. Reachable via
+        `POST /api/dlq/retry`, which resets a `logistics`-stage row to
+        `'approved'` without checking it still has a contact or a draft.
+        Unlike shape 1, nothing was ever sent here, so this is a genuine
+        (non-ambiguous) terminal failure, not an "unknown, don't retry" one —
+        it just still needs a human, since the underlying cause (a deleted
+        contact, a missing draft) won't fix itself.
    - `celery_app.timezone` (`America/Toronto`) governs Beat's own cron
      interpretation ONLY — which wall-clock instant "every 5 minutes" or
      "hour 8" means for scheduling the *tasks themselves*. The scanner's own
@@ -480,7 +509,7 @@ Two-level status vocabulary — GLOBAL (`companies.research_status`) and PER-USE
 `failed`:
 
 - `companies.research_status`: `found` → `researched`, or `found` → `failed` (no eligible contacts).
-- `outreach.status`: `queued` → `drafted` → `approved` → `sending` → `sent`, or `drafted` → `rejected`, or `queued`/`drafted` → `failed`, or `sending` → `failed` (Gmail error, or reaped after 30 min stuck). `sending` is a transient CLAIM (see the rewritten **Logistics** section and **Scheduling & Cadence** above), not a stage a human ever chooses.
+- `outreach.status`: `queued` → `drafting` → `drafted` → `approved` → `sending` → `sent`, or `drafting` → `queued` (transient failure, reclaimed), or `drafted` → `rejected`, or `queued`/`drafting`/`drafted`/`approved` → `failed`, or `sending` → `failed` (Gmail error, a definitive Gmail rejection, or reaped after 30 min stuck with the outcome unknown). `drafting`, `sending`, and a `sending` row whose ticket has been claimed but not yet confirmed sent are all transient CLAIMS (see the rewritten **Logistics** section and **Scheduling & Cadence** above), not stages a human ever chooses.
 
 Tables:
 

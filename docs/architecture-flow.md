@@ -87,13 +87,16 @@ stateDiagram-v2
     }
     state "PER-USER — outreach.status" as P {
         [*] --> queued: user selects a company
-        queued --> drafted
-        queued --> failed: empty model output
+        queued --> drafting: drafting_task CLAIMS the row
+        drafting --> drafted
+        drafting --> queued: reclaimed after a stale claim
+        drafting --> failed: empty model output, or LLM auth failure
         drafted --> approved: human approves (± schedule)
         drafted --> rejected
         approved --> sending: send_due_task CLAIMS the row
+        approved --> failed: orphaned (no contact or no draft), reaped
         sending --> sent
-        sending --> failed: Gmail error, or reaped after 30 min
+        sending --> failed: Gmail error, or reaped after 30 min (outcome unknown)
     }
 ```
 
