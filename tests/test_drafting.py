@@ -148,12 +148,15 @@ def test_drafting_one_bad_outreach_does_not_abort_sweep():
         ),
         patch("cold_email.workers.drafting.drafting.commit_draft"),
         patch("cold_email.workers.drafting.drafting.update_outreach_status") as mock_status,
+        patch("cold_email.workers.drafting.drafting.handle_transient_failure") as mock_transient,
     ):
         result = drafting_task(USER_1)
 
     # Only the second row drafted; the first was left at 'queued' (no status write).
     assert result == {"status": "success", "drafted": 1}
     mock_status.assert_called_once_with(OUTREACH_B, OUTREACH_DRAFTED)
+    mock_transient.assert_called_once()
+    assert mock_transient.call_args.args[0] == OUTREACH_A
 
 
 @pytest.mark.asyncio

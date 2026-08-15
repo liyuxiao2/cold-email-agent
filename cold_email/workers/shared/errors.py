@@ -23,6 +23,7 @@ import logging
 from cold_email.database import OUTREACH_FAILED, RESEARCH_FAILED
 from cold_email.workers.shared.db_helpers import (
     record_dead_letter,
+    set_outreach_error_msg,
     update_company_research_status,
     update_outreach_status,
 )
@@ -44,6 +45,16 @@ def fail_outreach(outreach_id: str, reason: str, *, stage: str, task_name: str) 
     logger.warning(f"Outreach {outreach_id} failed and dead-lettered ({stage}): {reason}")
 
 
-def handle_transient_failure(entity_id: str, error: Exception | str) -> None:
-    """Log a transient failure, leaving status untouched so the next run retries."""
-    logger.error(f"Transient failure on {entity_id}: {error}")
+def handle_transient_failure(outreach_id: str, error: Exception | str) -> None:
+    """Log a transient failure and record it on the row, leaving STATUS
+    untouched so the next run retries naturally.
+
+    Before this, a transient failure (a rate-limit chain exhaustion, a
+    provider blip) left the row with no error_msg and no DLQ row — nothing a
+    user could see — while the hourly recovery sweep silently retried the
+    same doomed row forever. Writing the reason to outreach.error_msg makes
+    that state explicable in the UI and the database without making it
+    terminal: no DLQ row, no status change.
+    """
+    logger.error(f"Transient failure on {outreach_id}: {error}")
+    set_outreach_error_msg(outreach_id, str(error))

@@ -39,6 +39,24 @@ def update_outreach_status(outreach_id: str, status: str, error_msg: str | None 
         session.commit()
 
 
+def set_outreach_error_msg(outreach_id: str, error_msg: str) -> None:
+    """Record an error message on an outreach row WITHOUT touching status.
+
+    Used for TRANSIENT failures: the row must stay exactly where it is (so the
+    next sweep or recovery pass retries it naturally), but the reason it
+    failed last time should not be invisible — a bare log line means the user
+    sees nothing, and the DB has no trace either, while a retry loop churns on
+    it silently forever.
+    """
+    with get_sync_session() as session:
+        outreach = session.get(Outreach, outreach_id)
+        if outreach is None:
+            logger.warning(f"Outreach {outreach_id} not found; cannot set error_msg")
+            return
+        outreach.error_msg = error_msg
+        session.commit()
+
+
 def record_dead_letter(
     *,
     task_name: str,
