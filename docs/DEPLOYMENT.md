@@ -29,11 +29,19 @@ This guide provides instructions for deploying the **Cold Email Agent** backend 
 | `MODEL_FALLBACK_CHAIN` | Optional JSON array overriding the LLM chain | `["llama-3.3-70b-versatile","gemini-3.5-flash-lite"]` |
 | `GMAIL_CLIENT_ID` | Google OAuth2 Client ID | GCP Credentials |
 | `GMAIL_CLIENT_SECRET` | Google OAuth2 Client Secret | GCP Credentials |
-| `GMAIL_REFRESH_TOKEN` | Google OAuth2 Refresh Token | Gmail OAuth flow |
-| `GMAIL_SENDER_EMAIL` | Sender email address | `you@company.com` |
-| `CORS_ORIGINS` | Allowed frontend domains | `["https://your-app.vercel.app", "http://localhost:3000"]` |
+| `GMAIL_REFRESH_TOKEN` | Google OAuth2 Refresh Token (per-user in a later stack) | Gmail OAuth flow |
+| `GMAIL_SENDER_EMAIL` | Sender email address (per-user in a later stack) | `you@company.com` |
+| `SESSION_SECRET` | HS256 signing key for the session JWT | `secrets.token_urlsafe(48)` |
+| `ENCRYPTION_KEY` | Fernet key encrypting per-user Gmail refresh tokens at rest | `Fernet.generate_key()` |
+| `GOOGLE_REDIRECT_URI` | OAuth callback URL; must exactly match the Google Cloud Console entry | `https://<backend>/api/auth/google/callback` |
+| `FRONTEND_URL` | Where the OAuth callback redirects back to after login | `https://your-app.vercel.app` |
+| `ADMIN_EMAIL` | Google account seeded (or promoted) with `role='admin'` on every boot | `you@company.com` |
+| `COOKIE_SECURE` | Set the session cookie's `Secure` flag; `true` in production, `false` only for local `http` dev | `true` |
+| `CORS_ORIGINS` | Allowed frontend domains — **must be an explicit list, never `["*"]`**: browsers reject a wildcard origin combined with `allow_credentials=True`, so a wildcard would silently break cookie-based sessions | `["https://your-app.vercel.app", "http://localhost:3000"]` |
 
 > Sender identity (name, intro, links, experience bullets) is code, not config — edit `cold_email/sender_profile.py`.
+
+> ⚠️ **Back up `ENCRYPTION_KEY` before any user signs in.** It is unrecoverable: losing or rotating it makes every stored Gmail refresh token undecryptable and forces every user to re-consent through Google Sign-In.
 
 ### Frontend Configuration (Vercel)
 
@@ -66,7 +74,23 @@ This guide provides instructions for deploying the **Cold Email Agent** backend 
        --set-env-vars DATABASE_URL="<YOUR_ASYNC_POSTGRES_URL>",CELERY_BROKER_URL="<YOUR_REDIS_URL>",GEMINI_API_KEY="<KEY>",GROQ_API_KEY="<KEY>",FIRECRAWL_API_KEY="<KEY>",HUNTER_API_KEY="<KEY>"
    ```
 
-4. **Run Celery Worker on Cloud Run or Compute Engine**:
+4. **Create the two auth secrets in Secret Manager** and wire them into Cloud Run:
+   ```bash
+   uv run python -c "import secrets; print(secrets.token_urlsafe(48))" | \
+     gcloud secrets create session-secret --data-file=-
+   uv run python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())" | \
+     gcloud secrets create encryption-key --data-file=-
+
+   gcloud run deploy cold-email-backend \
+     --update-secrets=SESSION_SECRET=session-secret:latest,ENCRYPTION_KEY=encryption-key:latest \
+     --set-env-vars=GOOGLE_REDIRECT_URI=https://<backend>/api/auth/google/callback,FRONTEND_URL=https://your-app.vercel.app,ADMIN_EMAIL=you@company.com,COOKIE_SECURE=true
+   ```
+   ⚠️ **Back up the `encryption-key` secret's value before any user signs in.**
+   It cannot be recovered from Secret Manager metadata alone if the version is
+   destroyed — losing or rotating it makes every stored Gmail refresh token
+   undecryptable and forces every user to re-consent through Google Sign-In.
+
+5. **Run Celery Worker on Cloud Run or Compute Engine**:
    To run the background worker container continuously:
    ```bash
    # On GCE VM with Docker or as a Cloud Run worker container:
