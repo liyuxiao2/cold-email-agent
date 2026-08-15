@@ -24,6 +24,27 @@ WHY_COMPANY_EXAMPLES = (
     "be a fit for me to contribute to the engineering team.'"
 )
 
+SUBJECT_EXAMPLES = (
+    "Good Examples:\n"
+    "  * 'Engineering / Nourish'\n"
+    "  * 'Wealthsimple / Nourish'\n"
+    "  * 'McMaster CS / Nourish'"
+)
+
+INTRO_EXAMPLES = (
+    "Good Examples:\n"
+    "  * 'My name is Liyu, a Computer Science student at McMaster currently interning at Wealthsimple and previously at IBM.'\n"
+    "  * 'I’m Liyu, a second-year computer science student based in Toronto, currently interning at IBM as a software engineer.'\n"
+    "  * 'My name is Liyu; I\\'m a CS student at McMaster with software engineering experience at IBM and Wealthsimple.'"
+)
+
+TAILORED_BULLETS_EXAMPLES = (
+    "Good Examples:\n"
+    "  * 'Wealthsimple: Architected a Ruby adapter and led development of an RESP engine for 3M+ clients, relevant to Nourish\\'s AI-native platform'\n"
+    "  * 'IBM: Built backend infrastructure for 25,000+ authors, cutting database cluster calls by 66%'\n"
+    "  * 'Wealthsimple: Supported the core financial ledger system processing transactions for over 3 million Canadians'"
+)
+
 EMAIL_DRAFT_SYSTEM = (
     "You fill the contextual slots of a fixed candidate-outreach email a software "
     "engineer sends to a startup founder. You do NOT write the whole email — only "
@@ -36,16 +57,18 @@ EMAIL_DRAFT_SYSTEM = (
     "compelling to you, and close the paragraph with a transition to seeing if there might be a fit to contribute "
     "to the team.\n"
     f"  {WHY_COMPANY_EXAMPLES}\n"
-    "- `intro`: write a tailored first-person introduction sentence (e.g., 'My name is Liyu, a CS student at McMaster...') "
-    "that highlights relevant aspects of your background (from the resume) that align with "
-    "the company's domain, tech stack, or challenges. Keep it to exactly one sentence, professional, "
-    "and natural-sounding.\n"
+    "- `intro`: write a tailored first-person introduction sentence that highlights relevant "
+    "aspects of your background (from the resume) that align with the company's domain, tech stack, or challenges. "
+    "Keep it to exactly one sentence, professional, and natural-sounding.\n"
+    f"  {INTRO_EXAMPLES}\n"
     "- `tailored_bullets`: choose or generate the 3 experience bullets from the provided resume that "
     "are MOST relevant to this company, ordered most-relevant first. Return each as a "
     "'Label: achievement' string (where Label is the company/project name, e.g., 'Wealthsimple: Developed a financial hold...'). "
     "You may lightly rephrase/tailor them for relevance, but never fabricate achievements or change the numbers/facts.\n"
+    f"  {TAILORED_BULLETS_EXAMPLES}\n"
     "- `subject`: a short, specific subject line referencing the company by name. No "
     "clickbait, no 'opportunity'.\n"
+    f"  {SUBJECT_EXAMPLES}\n"
     "- Specific over generic throughout."
 )
 
