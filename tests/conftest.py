@@ -830,3 +830,26 @@ async def two_users_approved(async_session, pending_views):
     outreach_b = await _make(user_b, "CoB", "contact-b@co.com")
 
     return {"outreach_a": outreach_a, "outreach_b": outreach_b}
+
+
+@pytest_asyncio.fixture
+async def with_cadence(async_session, user_client):
+    """Set a daily cadence (see tests/test_scheduling_api.py's CADENCE) on
+    user_client's own account, so approve's empty-body path has a slot to
+    compute instead of falling through to NULL."""
+    from sqlalchemy import select
+
+    from cold_email.database import User
+
+    user = (
+        await async_session.execute(select(User).where(User.email == "user@example.com"))
+    ).scalar_one()
+    user.send_cadence = {
+        "max_per_day": 2,
+        "days": [0, 1, 2, 3, 4, 5, 6],
+        "window_start": "09:00",
+        "window_end": "17:00",
+        "timezone": "America/Toronto",
+    }
+    await async_session.commit()
+    return user
