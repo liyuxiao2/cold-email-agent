@@ -192,8 +192,8 @@ def sync_session_for(monkeypatch, async_session):
     sync_engine.dispose()
 
 
-@pytest.fixture
-def pending_views():
+@pytest_asyncio.fixture
+async def pending_views(async_session):
     """Apply pending_drafts / pending_sends / available_contacts to the test DB.
 
     async_session's create_all does not create database VIEWS at all (see
@@ -204,6 +204,12 @@ def pending_views():
 
     Torn down before the test ends (not left for async_session's own
     teardown): Postgres refuses DROP TABLE while a view still depends on it.
+
+    Takes `async_session` so it can roll it back before dropping the views: a
+    test that reads a view directly through async_session (e.g.
+    contact_selection.select_contact) leaves that session idle-in-transaction
+    holding an AccessShareLock on the view, which would otherwise deadlock the
+    DROP VIEW below waiting for an AccessExclusiveLock forever.
     """
     import sqlalchemy
 
@@ -213,6 +219,8 @@ def pending_views():
         conn.commit()
 
     yield
+
+    await async_session.rollback()
 
     with engine.connect() as conn:
         for view in _VIEW_NAMES:
@@ -382,6 +390,19 @@ async def three_queued_outreach(async_session, admin_user_id, pending_views):
         await _add_queued_outreach(async_session, admin_user_id, f"Acme{i}", f"ada{i}@acme.com")
         for i in range(3)
     ]
+
+
+@pytest_asyncio.fixture
+async def extra_users(async_session):
+    """Five additional users, for testing the global per-contact cap."""
+    from cold_email.database import ROLE_USER, User
+
+    users = [
+        User(email=f"u{i}@example.com", google_sub=f"sub-u{i}", role=ROLE_USER) for i in range(5)
+    ]
+    async_session.add_all(users)
+    await async_session.commit()
+    return [u.id for u in users]
 
 
 @pytest.fixture

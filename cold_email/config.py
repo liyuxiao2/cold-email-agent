@@ -100,5 +100,10 @@ class Settings(BaseSettings):
         "gemini-3.5-flash-lite",
     ]
 
+    # Max users who may ever email a single contact. A SPREADING HEURISTIC, not
+    # an invariant: concurrent requests can exceed it by one, which is cheaper
+    # than serialising pool selection across all users with SELECT FOR UPDATE.
+    contact_cap: int = 3
+
 
 settings = Settings()
