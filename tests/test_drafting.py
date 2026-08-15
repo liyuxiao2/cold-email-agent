@@ -1,13 +1,27 @@
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
 
 from cold_email.database import OUTREACH_DRAFTED
 from cold_email.workers.drafting.drafting import drafting_task
+from cold_email.workers.shared.gmail_client import GmailCredentials
 from cold_email.workers.shared.views import PendingDraft
 
 OUTREACH_A = "00000000-0000-0000-0000-00000000000a"
 OUTREACH_B = "00000000-0000-0000-0000-00000000000b"
+
+# A fake SenderContext for tests that only exercise the per-row loop, not
+# load_sender_context itself — profile/creds are never dereferenced because
+# draft_email and create_draft are patched out in these tests too.
+_FAKE_CONTEXT = SimpleNamespace(
+    profile=object(),
+    attachment=None,
+    creds=GmailCredentials(
+        refresh_token="rt-fake",  # noqa: S106 (test fixture, not a real credential)
+        sender_email="sender@example.com",
+    ),
+)
 
 
 def _pending_row(outreach_id, contact_email="contact@acme.com"):
@@ -49,6 +63,10 @@ def test_drafting_sweep_happy_path():
             return_value=[_pending_row(OUTREACH_A)],
         ),
         patch(
+            "cold_email.workers.drafting.drafting.load_sender_context",
+            return_value=(_FAKE_CONTEXT, "ok"),
+        ),
+        patch(
             "cold_email.workers.drafting.drafting.draft_email",
             return_value={
                 "subject": "Hi",
@@ -66,16 +84,15 @@ def test_drafting_sweep_happy_path():
         result = drafting_task()
 
     assert result == {"status": "success", "drafted": 1}
-    _, kwargs = mock_create.call_args
+    args, kwargs = mock_create.call_args
+    assert args[0] is _FAKE_CONTEXT.creds
     assert kwargs["to"] == "contact@acme.com"
     assert kwargs["subject"] == "Hi"
     assert kwargs["body"] == "A specific, short note."
     assert kwargs["html"] == "<p>A specific, short note.</p>"
-    # cold_email/resume.pdf no longer exists (Stack 2 moves résumés into the
-    # per-user profiles table); the repo-relative lookup degrades gracefully to
-    # no attachment rather than breaking. A later task in this stack replaces
-    # this lookup with the per-user résumé from resume_store.
-    assert kwargs["attachment_path"] is None
+    # The per-user résumé (SenderContext.attachment) is threaded through as-is;
+    # the fake context here has none.
+    assert kwargs["attachment"] is None
     mock_commit.assert_called_once()
     mock_status.assert_called_once_with(OUTREACH_A, OUTREACH_DRAFTED)
 
@@ -87,6 +104,10 @@ def test_drafting_skips_outreach_without_contact_email():
         patch(
             "cold_email.workers.drafting.drafting.fetch_pending_drafts",
             return_value=[_pending_row(OUTREACH_A, contact_email=None)],
+        ),
+        patch(
+            "cold_email.workers.drafting.drafting.load_sender_context",
+            return_value=(_FAKE_CONTEXT, "ok"),
         ),
         patch("cold_email.workers.drafting.drafting.draft_email") as mock_draft,
         patch("cold_email.workers.drafting.drafting.fail_outreach") as mock_fail,
@@ -107,6 +128,10 @@ def test_drafting_marks_empty_draft_failed():
             "cold_email.workers.drafting.drafting.fetch_pending_drafts",
             return_value=[_pending_row(OUTREACH_A)],
         ),
+        patch(
+            "cold_email.workers.drafting.drafting.load_sender_context",
+            return_value=(_FAKE_CONTEXT, "ok"),
+        ),
         patch("cold_email.workers.drafting.drafting.draft_email", return_value={}),
         patch("cold_email.workers.drafting.drafting.create_draft") as mock_create,
         patch("cold_email.workers.drafting.drafting.fail_outreach") as mock_fail,
@@ -126,6 +151,10 @@ def test_drafting_one_bad_outreach_does_not_abort_sweep():
         patch(
             "cold_email.workers.drafting.drafting.fetch_pending_drafts",
             return_value=[_pending_row(OUTREACH_A), _pending_row(OUTREACH_B)],
+        ),
+        patch(
+            "cold_email.workers.drafting.drafting.load_sender_context",
+            return_value=(_FAKE_CONTEXT, "ok"),
         ),
         patch(
             "cold_email.workers.drafting.drafting.draft_email",
@@ -252,7 +281,13 @@ async def test_bridge_picks_the_highest_confidence_contact(
 
 @pytest.mark.asyncio
 async def test_empty_model_output_fails_only_that_outreach_row(
-    async_session, admin_user_id, monkeypatch, sync_session_for, pending_views
+    async_session,
+    admin_user_id,
+    monkeypatch,
+    sync_session_for,
+    pending_views,
+    admin_profile,
+    admin_gmail_connected,
 ):
     """One bad row must not abort the sweep."""
     from cold_email.database import (
@@ -307,13 +342,13 @@ async def test_empty_model_output_fails_only_that_outreach_row(
 
     monkeypatch.setattr(
         "cold_email.workers.drafting.drafting.draft_email",
-        lambda row: (
+        lambda row, profile: (
             {} if row.contact_email == "bad@globex.com" else {"subject": "Hi", "body": "Body"}
         ),
     )
     monkeypatch.setattr("cold_email.workers.drafting.drafting.time.sleep", lambda *_: None)
     monkeypatch.setattr(
-        "cold_email.workers.drafting.drafting.create_draft", lambda **kwargs: "gmail-1"
+        "cold_email.workers.drafting.drafting.create_draft", lambda creds, **kwargs: "gmail-1"
     )
 
     from cold_email.workers.drafting.drafting import drafting_task
@@ -331,3 +366,94 @@ async def test_empty_model_output_fails_only_that_outreach_row(
     assert dl.outreach_id is not None
     assert dl.company_id is None
     assert dl.stage == "drafting"
+
+
+@pytest.mark.asyncio
+async def test_missing_profile_aborts_the_sweep_and_keeps_rows_queued(
+    async_session, admin_user_id, sync_session_for, queued_outreach
+):
+    """Rows stay queued rather than failing: finishing the profile should make
+    these drafts happen, with no DLQ retry needed."""
+    from cold_email.database import OUTREACH_QUEUED, DeadLetter
+    from cold_email.workers.drafting.drafting import drafting_task
+
+    result = drafting_task()
+    assert result["status"] == "no_profile"
+
+    await async_session.refresh(queued_outreach)
+    assert queued_outreach.status == OUTREACH_QUEUED
+
+    from sqlalchemy import func, select
+
+    assert (
+        await async_session.execute(select(func.count()).select_from(DeadLetter))
+    ).scalar_one() == 0
+
+
+@pytest.mark.asyncio
+async def test_missing_gmail_credentials_aborts_the_sweep(
+    async_session, admin_user_id, sync_session_for, queued_outreach, admin_profile
+):
+    from cold_email.database import OUTREACH_QUEUED
+    from cold_email.workers.drafting.drafting import drafting_task
+
+    result = drafting_task()
+    assert result["status"] == "gmail_disconnected"
+
+    await async_session.refresh(queued_outreach)
+    assert queued_outreach.status == OUTREACH_QUEUED
+
+
+@pytest.mark.asyncio
+async def test_profile_without_a_pdf_drafts_with_no_attachment(
+    async_session,
+    sync_session_for,
+    queued_outreach,
+    admin_profile_no_pdf,
+    admin_gmail_connected,
+    monkeypatch,
+    captured_drafts,
+):
+    from cold_email.workers.drafting.drafting import drafting_task
+
+    monkeypatch.setattr(
+        "cold_email.workers.drafting.drafting.draft_email",
+        lambda row, profile: {"subject": "Hi", "body": "Body", "body_html": "<p>Body</p>"},
+    )
+    monkeypatch.setattr("cold_email.workers.drafting.drafting.time.sleep", lambda *_: None)
+
+    drafting_task()
+    assert captured_drafts[0]["attachment"] is None
+
+
+@pytest.mark.asyncio
+async def test_resume_is_read_once_per_sweep_not_per_lead(
+    async_session,
+    sync_session_for,
+    three_queued_outreach,
+    admin_profile,
+    admin_gmail_connected,
+    monkeypatch,
+):
+    """The bytes cross the DB connection on every read. A 40-lead sweep reading
+    per lead would pull ~16MB out of Cloud SQL to attach the same file."""
+    reads = []
+    import cold_email.workers.drafting.drafting as drafting_module
+
+    original = drafting_module.get_resume_sync
+
+    def counting(session, user_id):
+        reads.append(user_id)
+        return original(session, user_id)
+
+    monkeypatch.setattr(drafting_module, "get_resume_sync", counting)
+    monkeypatch.setattr(
+        drafting_module,
+        "draft_email",
+        lambda row, profile: {"subject": "Hi", "body": "Body", "body_html": "<p>Body</p>"},
+    )
+    monkeypatch.setattr(drafting_module.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(drafting_module, "create_draft", lambda creds, **kwargs: "gmail-fake")
+
+    drafting_module.drafting_task()
+    assert len(reads) == 1, f"résumé read {len(reads)} times for 3 leads"

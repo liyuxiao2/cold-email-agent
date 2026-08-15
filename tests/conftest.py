@@ -279,3 +279,120 @@ async def other_users_profile(async_session):
     async_session.add(profile)
     await async_session.commit()
     return profile
+
+
+@pytest_asyncio.fixture
+async def admin_profile(async_session, admin_user_id):
+    """A complete profile with a résumé, owned by the admin.
+
+    Drafting sweeps are single-user (drafting_task() with no args) until
+    Stack 3, so worker tests act on the admin's own profile row.
+    """
+    from cold_email.database import Profile
+
+    profile = Profile(
+        user_id=admin_user_id,
+        name="Admin User",
+        intro="I am the admin.",
+        experience_pool=["Acme: a thing"],
+        resume_pdf=b"%PDF-1.7\n" + b"x" * 2048,
+        resume_filename="cv.pdf",
+    )
+    async_session.add(profile)
+    await async_session.commit()
+    return profile
+
+
+@pytest_asyncio.fixture
+async def admin_profile_no_pdf(async_session, admin_user_id):
+    """A complete profile with no résumé bytes — effective_resume_text falls
+    back to intro + experience_pool, so drafting must still succeed."""
+    from cold_email.database import Profile
+
+    profile = Profile(user_id=admin_user_id, name="Admin User", intro="I am the admin.")
+    async_session.add(profile)
+    await async_session.commit()
+    return profile
+
+
+@pytest_asyncio.fixture
+async def admin_gmail_connected(async_session, admin_user_id):
+    """Give the admin a usable (encrypted) Gmail refresh token."""
+    from cold_email.auth.crypto import encrypt
+    from cold_email.database import User
+
+    user = await async_session.get(User, admin_user_id)
+    user.gmail_refresh_token_enc = encrypt("rt-admin")
+    user.gmail_sender_email = "admin@example.com"
+    await async_session.commit()
+    return user
+
+
+async def _add_queued_outreach(async_session, admin_user_id, company_name: str, email: str):
+    """Insert one researched company + eligible contact + research row + a
+    'queued' outreach row for the admin, ready for a drafting sweep."""
+    from cold_email.database import (
+        OUTREACH_QUEUED,
+        RESEARCH_RESEARCHED,
+        Company,
+        CompanyContact,
+        Outreach,
+        Research,
+    )
+
+    company = Company(company_name=company_name, research_status=RESEARCH_RESEARCHED)
+    async_session.add(company)
+    await async_session.commit()
+
+    contact = CompanyContact(
+        company_id=company.id, email=email, first_name="Ada", eligible=True, confidence=90
+    )
+    async_session.add(contact)
+    async_session.add(
+        Research(
+            company_id=company.id,
+            tech_stack=["python"],
+            recent_news="news",
+            hook="hook",
+            raw_content="raw",
+        )
+    )
+    await async_session.commit()
+
+    outreach = Outreach(
+        user_id=admin_user_id, company_id=company.id, contact_id=contact.id, status=OUTREACH_QUEUED
+    )
+    async_session.add(outreach)
+    await async_session.commit()
+    return outreach
+
+
+@pytest_asyncio.fixture
+async def queued_outreach(async_session, admin_user_id, pending_views):
+    """One queued outreach row for the admin with an eligible contact and a
+    research row — the minimal input a drafting sweep needs."""
+    return await _add_queued_outreach(async_session, admin_user_id, "Acme", "ada@acme.com")
+
+
+@pytest_asyncio.fixture
+async def three_queued_outreach(async_session, admin_user_id, pending_views):
+    """The same as queued_outreach, but three companies — for asserting a
+    per-sweep (not per-lead) résumé read."""
+    return [
+        await _add_queued_outreach(async_session, admin_user_id, f"Acme{i}", f"ada{i}@acme.com")
+        for i in range(3)
+    ]
+
+
+@pytest.fixture
+def captured_drafts(monkeypatch):
+    """Record create_draft's kwargs (and the creds it was called with) instead
+    of hitting the real Gmail API."""
+    calls = []
+
+    def fake_create_draft(creds, **kwargs):
+        calls.append({"creds": creds, **kwargs})
+        return "gmail-fake-id"
+
+    monkeypatch.setattr("cold_email.workers.drafting.drafting.create_draft", fake_create_draft)
+    return calls

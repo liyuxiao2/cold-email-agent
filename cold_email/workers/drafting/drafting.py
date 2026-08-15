@@ -13,19 +13,23 @@ Shared failure handling lives in cold_email.workers.shared.errors.
 
 import logging
 import time
-from pathlib import Path
+from dataclasses import dataclass
 
 from celery import shared_task
 from sqlalchemy import text
 
+from cold_email.auth.gmail_creds import resolve_gmail_credentials
 from cold_email.database import (
     OUTREACH_DRAFTED,
     OUTREACH_QUEUED,
     ROLE_ADMIN,
     Outreach,
+    Profile,
     User,
     get_sync_session,
 )
+from cold_email.resume_store import get_resume_sync
+from cold_email.sender_profile import SenderProfile
 from cold_email.workers.drafting.constants import DRAFTING, ERR_EMPTY_DRAFT, ERR_NO_CONTACT_EMAIL
 from cold_email.workers.drafting.helpers.db_helpers import (
     commit_draft,
@@ -39,9 +43,46 @@ from cold_email.workers.shared.constants import (
 )
 from cold_email.workers.shared.db_helpers import update_outreach_status
 from cold_email.workers.shared.errors import fail_outreach, handle_transient_failure
-from cold_email.workers.shared.gmail_client import create_draft
+from cold_email.workers.shared.gmail_client import GmailCredentials, create_draft
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class SenderContext:
+    """Everything a drafting sweep needs about the sending user."""
+
+    profile: SenderProfile
+    attachment: tuple[str, bytes] | None
+    creds: GmailCredentials
+
+
+def load_sender_context(session, user_id: str) -> tuple[SenderContext | None, str]:
+    """Load profile, résumé, and Gmail credentials ONCE for a sweep.
+
+    Once, not per lead: the résumé bytes cross the DB connection on every read,
+    so a 40-lead sweep would pull ~16MB out of Cloud SQL to attach the same file
+    40 times.
+
+    Returns (context, reason). A None context is terminal for the SWEEP, not for
+    any single row — neither missing piece can be fixed by trying another lead.
+    """
+    row = session.get(Profile, user_id)
+    if row is None or not (row.name and row.intro):
+        return None, "no_profile"
+
+    user = session.get(User, user_id)
+    creds = resolve_gmail_credentials(user)
+    if creds is None:
+        return None, "gmail_disconnected"
+
+    # A missing PDF is NOT terminal: effective_resume_text falls back to
+    # intro + experience_pool, so the email is still personalised.
+    attachment = get_resume_sync(session, user_id)
+
+    return SenderContext(
+        profile=SenderProfile.from_row(row), attachment=attachment, creds=creds
+    ), "ok"
 
 
 def bridge_queue_admin_outreach() -> int:
@@ -107,8 +148,14 @@ def bridge_queue_admin_outreach() -> int:
 def drafting_task(self) -> dict:
     """Draft an email for every outreach row currently in pending_drafts.
 
-    Two failure classes, handled differently per row so one bad row never
-    aborts the whole sweep:
+    Two preflight checks abort the WHOLE sweep before any row is touched — a
+    missing profile or disconnected Gmail cannot be fixed by trying another
+    lead, so rows are left at 'queued' with no dead-letter row. Completing the
+    profile or reconnecting Gmail makes the next sweep pick them up with no
+    manual DLQ retry.
+
+    Once past preflight, two failure classes are handled differently per row
+    so one bad row never aborts the rest of the sweep:
       * Terminal (no contact email, empty model output) → fail_outreach marks
         the row 'failed'. It leaves the 'queued' state, drops out of
         pending_drafts, and won't be retried on the next sweep.
@@ -125,6 +172,24 @@ def drafting_task(self) -> dict:
     if not pending:
         return {"status": "success", "drafted": 0}
 
+    # Sweeps are single-user until Stack 3 makes drafting_task(user_id).
+    user_id = pending[0].user_id
+    with get_sync_session() as session:
+        context, reason = load_sender_context(session, user_id)
+        # load_sender_context only reads. Commit rather than let the session
+        # exit with a still-open transaction — an idle read transaction is a
+        # connection-pool liability, and it would otherwise hold locks (e.g.
+        # on pending_drafts, read a moment ago) for as long as the session
+        # lives.
+        session.commit()
+
+    if context is None:
+        # Leave rows at 'queued' and write NO dead-letter row: completing the
+        # profile or reconnecting Gmail should make these drafts happen with no
+        # manual retry.
+        logger.warning(f"Sweep aborted for user {user_id}: {reason}")
+        return {"status": reason, "drafted": 0}
+
     drafted = 0
     for row in pending:
         outreach_id = row.outreach_id
@@ -139,13 +204,7 @@ def drafting_task(self) -> dict:
             continue
 
         try:
-            # NOTE: draft_email now requires a `profile: SenderProfile` argument
-            # (built from a per-user `profiles` row via SenderProfile.from_row).
-            # This call site is intentionally NOT updated here — a later task in
-            # this stack loads the row's owning user's profile and threads it
-            # through. Until then this raises for every row and each falls into
-            # the `except` below as a transient failure (retried next sweep).
-            draft = draft_email(row)
+            draft = draft_email(row, context.profile)
             time.sleep(LLM_MIN_INTERVAL_SECONDS)
 
             if not draft.get("subject") or not draft.get("body"):
@@ -157,17 +216,13 @@ def drafting_task(self) -> dict:
                 )
                 continue
 
-            # Stack 2 replaces this repo-relative lookup with the per-user
-            # résumé stored on the profile row.
-            resume_path = Path(__file__).resolve().parent.parent.parent / "resume.pdf"
-            attachment_path = str(resume_path) if resume_path.exists() else None
-
             gmail_draft_id = create_draft(
+                context.creds,
                 to=row.contact_email,
                 subject=draft["subject"],
                 body=draft["body"],
                 html=draft.get("body_html"),
-                attachment_path=attachment_path,
+                attachment=context.attachment,
             )
             commit_draft(
                 outreach_id=outreach_id,

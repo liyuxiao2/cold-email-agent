@@ -13,10 +13,16 @@ import logging
 
 from celery import shared_task
 
+from cold_email.auth.gmail_creds import resolve_gmail_credentials
 from cold_email.database import OUTREACH_APPROVED, OUTREACH_SENT
-from cold_email.workers.logistics.constants import ERR_NO_GMAIL_DRAFT, LOGISTICS
+from cold_email.workers.logistics.constants import (
+    ERR_GMAIL_DISCONNECTED,
+    ERR_NO_GMAIL_DRAFT,
+    LOGISTICS,
+)
 from cold_email.workers.logistics.helpers.db_helpers import (
     fetch_outreach_status,
+    fetch_owning_user,
     fetch_send_inputs,
 )
 from cold_email.workers.shared.constants import DEFAULT_MAX_RETRIES, DEFAULT_RETRY_DELAY
@@ -69,8 +75,22 @@ def logistics_task(self, outreach_id: str) -> dict:
         )
         return {"status": "failed", "error": ERR_NO_GMAIL_DRAFT}
 
+    # Always the OWNING user's mailbox (from the outreach row's user_id via
+    # pending_sends) — never a global sender or whoever happens to be calling.
+    user = fetch_owning_user(inputs.user_id)
+    creds = resolve_gmail_credentials(user) if user else None
+
+    if creds is None:
+        fail_outreach(
+            outreach_id,
+            ERR_GMAIL_DISCONNECTED,
+            stage=LOGISTICS,
+            task_name="cold_email.workers.logistics.logistics_task",
+        )
+        return {"status": "failed", "error": ERR_GMAIL_DISCONNECTED}
+
     # A transient Gmail error here raises → Celery retries this single outreach.
-    send_draft(inputs.gmail_draft_id)
+    send_draft(creds, inputs.gmail_draft_id)
     update_outreach_status(outreach_id, OUTREACH_SENT)
 
     return {"status": "success"}

@@ -4,9 +4,14 @@ import pytest
 
 from cold_email.database import OUTREACH_SENT
 from cold_email.workers.logistics.logistics import logistics_task
+from cold_email.workers.shared.gmail_client import GmailCredentials
 from cold_email.workers.shared.views import PendingSend
 
 OUTREACH_ID = "00000000-0000-0000-0000-000000000000"
+FAKE_CREDS = GmailCredentials(
+    refresh_token="rt-owner",  # noqa: S106 (test fixture, not a real credential)
+    sender_email="owner@example.com",
+)
 
 
 def test_logistics_skips_when_not_pending():
@@ -29,7 +34,8 @@ def test_logistics_skips_when_not_pending():
 
 
 def test_logistics_sends_existing_draft():
-    """An approved outreach row with a gmail_draft_id gets sent and advanced to 'sent'."""
+    """An approved outreach row with a gmail_draft_id gets sent — from the
+    OWNING user's mailbox — and advanced to 'sent'."""
     with (
         patch(
             "cold_email.workers.logistics.logistics.fetch_send_inputs",
@@ -43,6 +49,14 @@ def test_logistics_sends_existing_draft():
             ),
         ),
         patch(
+            "cold_email.workers.logistics.logistics.fetch_owning_user",
+            return_value=object(),
+        ) as mock_owner,
+        patch(
+            "cold_email.workers.logistics.logistics.resolve_gmail_credentials",
+            return_value=FAKE_CREDS,
+        ),
+        patch(
             "cold_email.workers.logistics.logistics.send_draft", return_value="msg-1"
         ) as mock_send,
         patch("cold_email.workers.logistics.logistics.update_outreach_status") as mock_status,
@@ -50,8 +64,43 @@ def test_logistics_sends_existing_draft():
         result = logistics_task(OUTREACH_ID)
 
     assert result == {"status": "success"}
-    mock_send.assert_called_once_with("gmail-123")
+    mock_owner.assert_called_once_with("00000000-0000-0000-0000-000000000001")
+    mock_send.assert_called_once_with(FAKE_CREDS, "gmail-123")
     mock_status.assert_called_once_with(OUTREACH_ID, OUTREACH_SENT)
+
+
+def test_logistics_fails_when_owning_user_has_no_gmail_connected():
+    """The owning user's credentials are absent (never connected, or revoked)
+    -> terminal failure, dead-lettered, no send attempted. Never falls back to
+    a global mailbox or the caller's own credentials."""
+    with (
+        patch(
+            "cold_email.workers.logistics.logistics.fetch_send_inputs",
+            return_value=PendingSend(
+                outreach_id=OUTREACH_ID,
+                user_id="00000000-0000-0000-0000-000000000001",
+                contact_email="contact@acme.com",
+                gmail_draft_id="gmail-123",
+                subject_line="Hi",
+                body="Body",
+            ),
+        ),
+        patch("cold_email.workers.logistics.logistics.fetch_owning_user", return_value=object()),
+        patch(
+            "cold_email.workers.logistics.logistics.resolve_gmail_credentials",
+            return_value=None,
+        ),
+        patch("cold_email.workers.logistics.logistics.send_draft") as mock_send,
+        patch("cold_email.workers.logistics.logistics.fail_outreach") as mock_fail,
+    ):
+        result = logistics_task(OUTREACH_ID)
+
+    from cold_email.workers.logistics.constants import ERR_GMAIL_DISCONNECTED
+
+    assert result == {"status": "failed", "error": ERR_GMAIL_DISCONNECTED}
+    mock_send.assert_not_called()
+    assert mock_fail.call_args.args == (OUTREACH_ID, ERR_GMAIL_DISCONNECTED)
+    assert mock_fail.call_args.kwargs["stage"] == "logistics"
 
 
 def test_logistics_fails_without_gmail_draft_id():
