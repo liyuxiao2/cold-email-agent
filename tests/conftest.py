@@ -879,6 +879,30 @@ async def three_drafted_outreach(async_session, user_client):
 
 
 @pytest_asyncio.fixture
+async def other_user_scheduled(async_session):
+    """An 'approved' outreach row with a schedule, owned by somebody other
+    than user_client -- GET /api/outreach/scheduled must not return it."""
+    from datetime import UTC, datetime, timedelta
+
+    from cold_email.database import OUTREACH_APPROVED, ROLE_USER, Company, Outreach, User
+
+    other = User(email="other-scheduled@example.com", google_sub="sub-other-sched", role=ROLE_USER)
+    company = Company(company_name="OtherScheduledCo")
+    async_session.add_all([other, company])
+    await async_session.commit()
+
+    outreach = Outreach(
+        user_id=other.id,
+        company_id=company.id,
+        status=OUTREACH_APPROVED,
+        scheduled_send_at=datetime.now(UTC) + timedelta(days=1),
+    )
+    async_session.add(outreach)
+    await async_session.commit()
+    return outreach
+
+
+@pytest_asyncio.fixture
 async def with_cadence(async_session, user_client):
     """Set a daily cadence (see tests/test_scheduling_api.py's CADENCE) on
     user_client's own account, so approve's empty-body path has a slot to

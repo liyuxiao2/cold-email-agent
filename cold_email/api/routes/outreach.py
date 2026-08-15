@@ -515,6 +515,56 @@ async def regenerate_outreach_api(
     }
 
 
+@router.post("/{outreach_id}/unschedule")
+async def unschedule(
+    outreach_id: str,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_async_session),
+):
+    """Pull an approved send back to the review deck.
+
+    Returns to 'drafted', NOT 'queued': the draft already exists, and
+    re-running the LLM would spend quota and produce copy the user never
+    reviewed.
+    """
+    outreach = await _own_outreach(session, outreach_id, user)
+    outreach.status = OUTREACH_DRAFTED
+    outreach.scheduled_send_at = None
+    await session.commit()
+    return {"success": True, "status": OUTREACH_DRAFTED}
+
+
+@router.get("/scheduled")
+async def list_scheduled(
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_async_session),
+):
+    """Upcoming sends for the caller, soonest first."""
+    rows = (
+        await session.execute(
+            select(Outreach, Company.company_name)
+            .join(Company, Company.id == Outreach.company_id)
+            .where(
+                Outreach.user_id == user.id,
+                Outreach.status == OUTREACH_APPROVED,
+                Outreach.scheduled_send_at.isnot(None),
+            )
+            .order_by(Outreach.scheduled_send_at)
+        )
+    ).all()
+
+    return {
+        "items": [
+            {
+                "outreach_id": str(o.id),
+                "company_name": name,
+                "scheduled_send_at": o.scheduled_send_at.isoformat(),
+            }
+            for o, name in rows
+        ]
+    }
+
+
 def _period_end(now=None):
     """Midnight UTC on the first of the month AFTER the current period."""
     start = period_start(now)

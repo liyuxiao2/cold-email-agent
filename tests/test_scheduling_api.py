@@ -169,3 +169,41 @@ async def test_cadence_crud(user_client):
 
     await user_client.delete("/api/cadence")
     assert (await user_client.get("/api/cadence")).json()["cadence"] is None
+
+
+@pytest.mark.asyncio
+async def test_unschedule_returns_the_row_to_drafted(
+    user_client, drafted_outreach, async_session, with_cadence
+):
+    """drafted, not queued: the draft exists, and re-running the LLM would spend
+    quota and produce copy the user never reviewed."""
+    await user_client.post(f"/api/outreach/{drafted_outreach.id}/approve")
+    await user_client.post(f"/api/outreach/{drafted_outreach.id}/unschedule")
+
+    await async_session.refresh(drafted_outreach)
+    assert drafted_outreach.status == "drafted"
+    assert drafted_outreach.scheduled_send_at is None
+
+
+@pytest.mark.asyncio
+async def test_scheduled_queue_returns_only_the_callers_rows(user_client, other_user_scheduled):
+    body = (await user_client.get("/api/outreach/scheduled")).json()
+    assert body["items"] == []
+
+
+@pytest.mark.asyncio
+async def test_scheduled_queue_includes_the_callers_own_scheduled_row(
+    user_client, drafted_outreach, with_cadence
+):
+    await user_client.post(f"/api/outreach/{drafted_outreach.id}/approve")
+    body = (await user_client.get("/api/outreach/scheduled")).json()
+    assert len(body["items"]) == 1
+    assert body["items"][0]["outreach_id"] == str(drafted_outreach.id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["approve", "unschedule"])
+async def test_another_users_row_is_404(user_client, other_user_outreach, action):
+    assert (
+        await user_client.post(f"/api/outreach/{other_user_outreach.id}/{action}")
+    ).status_code == 404
