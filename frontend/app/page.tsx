@@ -10,6 +10,7 @@ import {
   Mail,
   LogOut,
   AlertCircle,
+  User as UserIcon,
 } from 'lucide-react';
 import {
   CompanyItem,
@@ -90,7 +91,9 @@ export default function DashboardPage() {
   }, [statusFilter, searchQuery]);
 
   useEffect(() => {
-    if (!authLoading && !user) router.push('/login');
+    if (authLoading) return;
+    if (!user) router.push('/login');
+    else if (!user.profile_complete) router.push('/onboarding');
   }, [authLoading, user, router]);
 
   // Only fetch once we know there is a session; an anonymous call would 401.
@@ -196,7 +199,7 @@ export default function DashboardPage() {
       </div>
     );
   }
-  if (!user) return null;
+  if (!user || !user.profile_complete) return null;
 
   return (
     <div style={{ maxWidth: '1280px', margin: '0 auto', padding: '2rem 1.5rem' }}>
@@ -316,6 +319,24 @@ export default function DashboardPage() {
             }}
           >
             <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{user.email}</span>
+            <button
+              onClick={() => router.push('/profile')}
+              title={user.gmail_connected ? 'Your profile' : 'Your profile (Gmail not connected)'}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: '42px',
+                height: '42px',
+                borderRadius: '10px',
+                backgroundColor: 'var(--bg-secondary)',
+                color: user.gmail_connected ? 'var(--text-secondary)' : 'var(--warning)',
+                border: `1px solid ${user.gmail_connected ? 'var(--border-color)' : 'var(--warning)'}`,
+                cursor: 'pointer',
+              }}
+            >
+              <UserIcon size={16} />
+            </button>
             <button
               onClick={logout}
               title="Sign out"

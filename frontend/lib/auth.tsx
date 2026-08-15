@@ -17,6 +17,9 @@ export type User = {
   picture_url: string | null;
   role: 'user' | 'admin';
   gmail_connected: boolean;
+  // Drives the onboarding gate in app/page.tsx. Comes straight from
+  // GET /api/auth/me, which computes it server-side (name + intro present).
+  profile_complete: boolean;
 };
 
 type AuthState = { user: User | null; loading: boolean; logout: () => Promise<void> };
