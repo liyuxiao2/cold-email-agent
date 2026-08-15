@@ -65,12 +65,18 @@ async def trigger_discovery_api(admin: User = Depends(require_admin)):
 
 @router.post("/drafting")
 async def trigger_drafting_api(admin: User = Depends(require_admin)):
-    """Manually trigger a drafting batch sweep."""
-    try:
-        from cold_email.workers.drafting import drafting_task
+    """Manually trigger the drafting recovery sweep.
 
-        task = drafting_task.delay()
-        return {"success": True, "message": "Drafting task queued", "task_id": task.id}
+    Drafting itself is now dispatched per-user by POST /api/outreach right
+    after a user selects companies; this admin route triggers the same
+    safety-net sweep Beat runs hourly, for users whose queued rows have been
+    sitting long enough to look like a lost dispatch.
+    """
+    try:
+        from cold_email.workers.drafting import drafting_recovery_task
+
+        task = drafting_recovery_task.delay()
+        return {"success": True, "message": "Drafting recovery sweep queued", "task_id": task.id}
     except Exception as e:
         tb = traceback.format_exc()
         logger.error(f"Failed to queue drafting task: {e}\n{tb}")

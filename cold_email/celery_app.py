@@ -28,10 +28,12 @@ app.conf.beat_schedule = {
         "task": "cold_email.workers.discovery.discovery_task",
         "schedule": crontab(hour=8, minute=0, day_of_week="monday"),
     },
-    # Drafting is a batch sweep, not chained off research. This periodic tick
-    # collects every lead that has reached 'researched' since the last run.
-    "drafting-sweep": {
-        "task": "cold_email.workers.drafting.drafting_task",
-        "schedule": crontab(minute="*/15"),
+    # Drafting is now dispatched by POST /api/outreach when a user selects
+    # companies. This hourly sweep only recovers rows whose dispatch was lost
+    # (e.g. a Redis hiccup during that request) — a safety net, not the
+    # primary path.
+    "drafting-recovery-sweep": {
+        "task": "cold_email.workers.drafting.drafting_recovery_task",
+        "schedule": crontab(minute=0),
     },
 }
