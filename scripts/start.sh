@@ -10,6 +10,12 @@ export C_FORCE_ROOT=1
 echo "=== Ensuring database tables exist ==="
 python -c "from cold_email.database import Base, sync_engine; Base.metadata.create_all(sync_engine)"
 
+# create_all does not provision VIEWS (R23) — apply them separately, every
+# boot, so pending_drafts/pending_sends/available_contacts exist for the
+# drafting and logistics workers even on a create_all-only database.
+echo "=== Applying database views ==="
+python -m scripts.apply_views || echo "WARNING: view provisioning failed; continuing"
+
 echo "Seeding admin user..."
 python -m scripts.seed_admin || echo "WARNING: admin seed failed; continuing"
 
