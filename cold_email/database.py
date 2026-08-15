@@ -110,6 +110,13 @@ RESEARCH_FAILED = "failed"
 
 # Per-user outreach lifecycle. 'sending' is added in Stack 4.
 OUTREACH_QUEUED = "queued"
+# A transient CLAIM, not a user-facing lifecycle stage: drafting_task moves a
+# row here atomically (UPDATE ... WHERE status = 'queued' ... RETURNING) right
+# before working it, so a second concurrent dispatch reading the same
+# still-queued rows sees them already gone and skips them instead of drafting
+# them a second time. A transient failure on a claimed row reverts it to
+# 'queued' rather than leaving it stuck here.
+OUTREACH_DRAFTING = "drafting"
 OUTREACH_DRAFTED = "drafted"
 OUTREACH_APPROVED = "approved"
 OUTREACH_SENT = "sent"

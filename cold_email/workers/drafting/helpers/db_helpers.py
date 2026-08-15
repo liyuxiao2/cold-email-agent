@@ -8,12 +8,43 @@ outreach.status.
 
 import logging
 
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 
-from cold_email.database import Draft, get_sync_session
+from cold_email.database import OUTREACH_DRAFTING, OUTREACH_QUEUED, Draft, get_sync_session
 from cold_email.workers.shared.views import PendingDraft
 
 logger = logging.getLogger(__name__)
+
+_CLAIM_SQL = text(
+    "UPDATE outreach SET status = :drafting WHERE id IN :ids AND status = :queued RETURNING id"
+).bindparams(bindparam("ids", expanding=True))
+
+
+def claim_pending_drafts(outreach_ids: list[str]) -> set[str]:
+    """Atomically move the given rows from 'queued' to 'drafting' and return
+    the ids ACTUALLY claimed by this call.
+
+    The single UPDATE's own `WHERE status = 'queued'` is the compare-and-swap:
+    two concurrent sweeps (a second selection, a manual Regenerate, the hourly
+    recovery sweep) can both fetch the same still-queued rows from
+    pending_drafts, but only one of them will see a row here once the other
+    has already flipped its status — so only one of them ever drafts it.
+    Callers must filter their own row list down to the returned ids before
+    doing any work.
+    """
+    if not outreach_ids:
+        return set()
+    with get_sync_session() as session:
+        claimed = (
+            session.execute(
+                _CLAIM_SQL,
+                {"drafting": OUTREACH_DRAFTING, "queued": OUTREACH_QUEUED, "ids": outreach_ids},
+            )
+            .scalars()
+            .all()
+        )
+        session.commit()
+    return {str(outreach_id) for outreach_id in claimed}
 
 
 def fetch_pending_drafts(user_id: str) -> list[PendingDraft]:

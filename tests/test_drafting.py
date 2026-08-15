@@ -1,9 +1,9 @@
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 import pytest
 
-from cold_email.database import OUTREACH_DRAFTED
+from cold_email.database import OUTREACH_DRAFTED, OUTREACH_QUEUED
 from cold_email.workers.drafting.drafting import drafting_task
 from cold_email.workers.shared.gmail_client import GmailCredentials
 from cold_email.workers.shared.llm import LlmCredentials
@@ -87,6 +87,10 @@ def test_drafting_sweep_happy_path():
         ) as mock_create,
         patch("cold_email.workers.drafting.drafting.commit_draft") as mock_commit,
         patch("cold_email.workers.drafting.drafting.update_outreach_status") as mock_status,
+        patch(
+            "cold_email.workers.drafting.drafting.claim_pending_drafts",
+            side_effect=lambda ids: set(ids),
+        ),
     ):
         result = drafting_task(USER_1)
 
@@ -118,6 +122,10 @@ def test_drafting_marks_empty_draft_failed():
         patch("cold_email.workers.drafting.drafting.draft_email", return_value={}),
         patch("cold_email.workers.drafting.drafting.create_draft") as mock_create,
         patch("cold_email.workers.drafting.drafting.fail_outreach") as mock_fail,
+        patch(
+            "cold_email.workers.drafting.drafting.claim_pending_drafts",
+            side_effect=lambda ids: set(ids),
+        ),
     ):
         result = drafting_task(USER_1)
 
@@ -149,12 +157,20 @@ def test_drafting_one_bad_outreach_does_not_abort_sweep():
         patch("cold_email.workers.drafting.drafting.commit_draft"),
         patch("cold_email.workers.drafting.drafting.update_outreach_status") as mock_status,
         patch("cold_email.workers.drafting.drafting.handle_transient_failure") as mock_transient,
+        patch(
+            "cold_email.workers.drafting.drafting.claim_pending_drafts",
+            side_effect=lambda ids: set(ids),
+        ),
     ):
         result = drafting_task(USER_1)
 
-    # Only the second row drafted; the first was left at 'queued' (no status write).
+    # Only the second row drafted; the first's claim is released back to
+    # 'queued' so the next sweep retries it.
     assert result == {"status": "success", "drafted": 1}
-    mock_status.assert_called_once_with(OUTREACH_B, OUTREACH_DRAFTED)
+    assert mock_status.call_args_list == [
+        call(OUTREACH_A, OUTREACH_QUEUED),
+        call(OUTREACH_B, OUTREACH_DRAFTED),
+    ]
     mock_transient.assert_called_once()
     assert mock_transient.call_args.args[0] == OUTREACH_A
 
@@ -641,3 +657,65 @@ async def test_one_users_missing_profile_does_not_block_another_users_draft(
     assert (
         await async_session.execute(select(func.count()).select_from(DeadLetter))
     ).scalar_one() == 0
+
+
+@pytest.mark.asyncio
+async def test_two_concurrent_dispatches_draft_a_row_exactly_once(
+    async_session,
+    admin_user_id,
+    sync_session_for,
+    queued_outreach,
+    admin_profile,
+    admin_gmail_connected,
+    monkeypatch,
+    captured_drafts,
+):
+    """The bug this test would have caught: a row stayed 'queued' until AFTER
+    the LLM call and the Gmail round-trip, so a second dispatch over the same
+    queued rows (a double click, a Regenerate landing mid-sweep, the hourly
+    recovery sweep) would read the same rows from pending_drafts and draft
+    them a second time — two `drafts` rows and two Gmail drafts to the same
+    contact.
+
+    Simulated without real threads: both "concurrent" dispatches see the
+    exact same pending_drafts snapshot (fetch_pending_drafts is pinned to
+    return it unconditionally, standing in for both having already read it
+    before either claimed), then drafting_task is called twice in a row.
+    claim_pending_drafts's `WHERE status = 'queued'` is the compare-and-swap
+    that must make the second call's claim come back empty regardless of
+    how the two calls interleave.
+    """
+    from sqlalchemy import func, select
+
+    import cold_email.workers.drafting.drafting as drafting_module
+    from cold_email.database import Draft
+
+    snapshot = drafting_module.fetch_pending_drafts(str(admin_user_id))
+    assert len(snapshot) == 1
+    monkeypatch.setattr(drafting_module, "fetch_pending_drafts", lambda user_id: snapshot)
+    monkeypatch.setattr(
+        drafting_module,
+        "draft_email",
+        lambda row, profile, credentials=None: {
+            "subject": "Hi",
+            "body": "Body",
+            "body_html": "<p>Body</p>",
+        },
+    )
+
+    result_1 = drafting_module.drafting_task(str(admin_user_id))
+    result_2 = drafting_module.drafting_task(str(admin_user_id))
+
+    assert result_1["drafted"] == 1
+    assert result_2["drafted"] == 0
+    assert len(captured_drafts) == 1
+
+    await async_session.refresh(queued_outreach)
+    assert queued_outreach.status == OUTREACH_DRAFTED
+
+    draft_count = (
+        await async_session.execute(
+            select(func.count()).select_from(Draft).where(Draft.outreach_id == queued_outreach.id)
+        )
+    ).scalar_one()
+    assert draft_count == 1

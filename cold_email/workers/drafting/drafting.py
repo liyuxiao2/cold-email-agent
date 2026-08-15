@@ -35,11 +35,15 @@ from celery import shared_task
 from sqlalchemy import text
 
 from cold_email.auth.gmail_creds import resolve_gmail_credentials
-from cold_email.database import OUTREACH_DRAFTED, Profile, User, get_sync_session
+from cold_email.database import OUTREACH_DRAFTED, OUTREACH_QUEUED, Profile, User, get_sync_session
 from cold_email.resume_store import get_resume_sync
 from cold_email.sender_profile import SenderProfile
 from cold_email.workers.drafting.constants import DRAFTING, ERR_EMPTY_DRAFT
-from cold_email.workers.drafting.helpers.db_helpers import commit_draft, fetch_pending_drafts
+from cold_email.workers.drafting.helpers.db_helpers import (
+    claim_pending_drafts,
+    commit_draft,
+    fetch_pending_drafts,
+)
 from cold_email.workers.drafting.helpers.generation import draft_email
 from cold_email.workers.shared.constants import DEFAULT_MAX_RETRIES, DEFAULT_RETRY_DELAY
 from cold_email.workers.shared.db_helpers import update_outreach_status
@@ -128,7 +132,9 @@ def drafting_task(self, user_id: str) -> dict:
         (contact_email is never missing here: pending_drafts INNER JOINs
         company_contacts on a NOT NULL email.)
       * Transient (LLM/Gmail network hiccup) → handle_transient_failure logs
-        and leaves the row at 'queued'. The recovery sweep retries it later.
+        and records the reason, and the row is explicitly requeued to
+        'queued' (releasing this sweep's claim — see claim_pending_drafts)
+        so the recovery sweep retries it later.
 
     autoretry_for only fires for errors *outside* the per-row loop (e.g. the
     initial pending_drafts read), never for a single row — those are caught
@@ -150,9 +156,28 @@ def drafting_task(self, user_id: str) -> dict:
     if context is None:
         # Leave this user's rows at 'queued' and write NO dead-letter row:
         # completing the profile or reconnecting Gmail should make these
-        # drafts happen with no manual retry.
+        # drafts happen with no manual retry. Claiming happens AFTER this
+        # check specifically so an aborted sweep never needs to release a
+        # claim it never took.
         logger.warning(f"Sweep aborted for user {user_id}: {reason}")
         return {"status": reason, "drafted": 0}
+
+    # Claim before working: two dispatches racing over the same queued rows
+    # (a double click, a Regenerate landing mid-sweep, the hourly recovery
+    # sweep) would otherwise both read the same rows from pending_drafts and
+    # both draft them — two `drafts` rows and two Gmail drafts to the same
+    # contact, invisible to the user because the review deck only shows the
+    # newest. The claim's own WHERE status = 'queued' is the compare-and-swap:
+    # whichever dispatch's UPDATE commits first wins each row; the other sees
+    # it already claimed and silently skips it.
+    # str(): fetch_pending_drafts reads outreach_id back as a real uuid.UUID
+    # (psycopg2's default UUID adapter), despite PendingDraft's `str` type
+    # hint — normalize both sides so the membership check below isn't
+    # comparing a UUID to its own string representation.
+    claimed_ids = claim_pending_drafts([str(row.outreach_id) for row in pending])
+    pending = [row for row in pending if str(row.outreach_id) in claimed_ids]
+    if not pending:
+        return {"status": "success", "drafted": 0}
 
     drafted = 0
     for row in pending:
@@ -191,6 +216,12 @@ def drafting_task(self, user_id: str) -> dict:
 
         except Exception as exc:
             handle_transient_failure(outreach_id, exc)
+            # Release this sweep's claim: handle_transient_failure only
+            # records the reason and never touches status, so without this
+            # the row would stay stuck at 'drafting' — invisible to both the
+            # next sweep's pending_drafts read and the recovery sweep, which
+            # only ever look at 'queued' rows.
+            update_outreach_status(outreach_id, OUTREACH_QUEUED)
 
     return {"status": "success", "drafted": drafted}
 
