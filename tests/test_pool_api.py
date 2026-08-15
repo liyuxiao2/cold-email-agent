@@ -48,7 +48,7 @@ async def test_no_email_addresses_are_exposed(user_client, pool_fixture):
     """The pool is the product's inventory. A scrapeable list of verified founder
     emails handed to every signup is a lead-list leak."""
     body = (await user_client.get("/api/companies")).text
-    assert "@" not in body or "founder@" not in body
+    assert "@" not in body
 
     company_id = (await user_client.get("/api/companies")).json()["items"][0]["id"]
     detail = (await user_client.get(f"/api/companies/{company_id}")).text
