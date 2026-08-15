@@ -10,6 +10,9 @@ export C_FORCE_ROOT=1
 echo "=== Ensuring database tables exist ==="
 python -c "from cold_email.database import Base, sync_engine; Base.metadata.create_all(sync_engine)"
 
+echo "Seeding admin user..."
+python -m scripts.seed_admin || echo "WARNING: admin seed failed; continuing"
+
 echo "=== Starting Celery Worker with Beat scheduler ==="
 celery -A cold_email.celery_app worker --loglevel=info -B &
 
