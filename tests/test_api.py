@@ -106,6 +106,7 @@ async def test_stats_reports_both_levels(async_session, user_client):
         "queued",
         "drafted",
         "approved",
+        "sending",
         "sent",
         "rejected",
         "failed",

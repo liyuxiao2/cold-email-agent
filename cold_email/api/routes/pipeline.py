@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/pipeline", tags=["pipeline"])
 
 _COMPANY_STATUSES = ["found", "researched", "failed"]
-_OUTREACH_STATUSES = ["queued", "drafted", "approved", "sent", "rejected", "failed"]
+_OUTREACH_STATUSES = ["queued", "drafted", "approved", "sending", "sent", "rejected", "failed"]
 
 
 @router.get("/stats")
