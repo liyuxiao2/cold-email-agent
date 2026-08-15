@@ -7,7 +7,7 @@ plain predicate consulted once, from the OAuth callback, before a `User` row
 ever exists — it isn't a request dependency — so it gets its own module
 rather than blurring that file's contract.
 
-A signed-in `role='user'` account can already call `POST /api/leads/{id}/approve`,
+A signed-in `role='user'` account can already call `POST /api/outreach/{id}/approve`,
 which sends real mail through the single shared `GMAIL_REFRESH_TOKEN` mailbox.
 So unlike a typical app, "anyone with a Google account" is not a safe signup
 policy — only default-deny is.
