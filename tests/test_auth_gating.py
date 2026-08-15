@@ -55,6 +55,9 @@ async def test_user_routes_reject_anonymous(client, method, path):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("method,path", USER_ROUTES)
-async def test_user_routes_accept_authenticated_users(user_client, method, path):
+async def test_user_routes_accept_authenticated_users(user_client, pending_views, method, path):
+    """`pending_views` is provisioned unconditionally: GET /api/companies reads
+    available_contacts directly, so it 500s without the view even though the
+    other routes in USER_ROUTES don't touch it."""
     response = await user_client.request(method, path)
     assert response.status_code == 200

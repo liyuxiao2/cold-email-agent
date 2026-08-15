@@ -436,6 +436,159 @@ async def company_factory(async_session):
     return _factory
 
 
+@pytest_asyncio.fixture
+async def pool_fixture(async_session, pending_views):
+    """The company pool's baseline scenario for /api/companies tests.
+
+    ResearchedCo is the only company that should ever appear in a plain,
+    unfiltered listing: FoundCo and FailedCo have not finished research, and
+    GenericOnlyCo has no ELIGIBLE contact (its one contact is a generic
+    inbox), so it is excluded by the pool's availability check the same way
+    an exhausted company is.
+    """
+    from cold_email.database import (
+        RESEARCH_FAILED,
+        RESEARCH_FOUND,
+        RESEARCH_RESEARCHED,
+        Company,
+        CompanyContact,
+        Research,
+    )
+
+    researched = Company(
+        company_name="ResearchedCo",
+        research_status=RESEARCH_RESEARCHED,
+        industry="Fintech",
+        headcount=10,
+    )
+    found = Company(company_name="FoundCo", research_status=RESEARCH_FOUND)
+    failed = Company(company_name="FailedCo", research_status=RESEARCH_FAILED)
+    generic_only = Company(company_name="GenericOnlyCo", research_status=RESEARCH_RESEARCHED)
+    async_session.add_all([researched, found, failed, generic_only])
+    await async_session.commit()
+
+    async_session.add_all(
+        [
+            CompanyContact(
+                company_id=researched.id,
+                email="founder@researched.co",
+                first_name="Fay",
+                position="Founder",
+                is_founder=True,
+                eligible=True,
+                confidence=90,
+            ),
+            CompanyContact(
+                company_id=researched.id,
+                email="cto@researched.co",
+                first_name="Cody",
+                position="CTO",
+                is_founder=False,
+                eligible=True,
+                confidence=80,
+            ),
+            CompanyContact(
+                company_id=generic_only.id,
+                email="info@genericonly.co",
+                first_name="Gen",
+                position="Info",
+                is_founder=False,
+                eligible=False,
+                confidence=10,
+            ),
+            Research(
+                company_id=researched.id,
+                hook="A great hook",
+                tech_stack=["python"],
+                recent_news="news",
+                raw_content="raw",
+            ),
+        ]
+    )
+    await async_session.commit()
+    return {
+        "researched": researched,
+        "found": found,
+        "failed": failed,
+        "generic_only": generic_only,
+    }
+
+
+@pytest_asyncio.fixture
+async def exhausted_company(async_session, pending_views):
+    """ExhaustedCo has one eligible contact already used by settings.contact_cap
+    different users, so it must drop out of everyone's pool."""
+    from cold_email.config import settings
+    from cold_email.database import (
+        RESEARCH_RESEARCHED,
+        ROLE_USER,
+        Company,
+        CompanyContact,
+        Outreach,
+        User,
+    )
+
+    company = Company(company_name="ExhaustedCo", research_status=RESEARCH_RESEARCHED)
+    async_session.add(company)
+    await async_session.commit()
+
+    contact = CompanyContact(
+        company_id=company.id,
+        email="only@exhausted.co",
+        first_name="Ex",
+        eligible=True,
+        confidence=90,
+    )
+    async_session.add(contact)
+    await async_session.commit()
+
+    users = [
+        User(email=f"exhaust{i}@example.com", google_sub=f"sub-exhaust{i}", role=ROLE_USER)
+        for i in range(settings.contact_cap)
+    ]
+    async_session.add_all(users)
+    await async_session.commit()
+
+    async_session.add_all(
+        [Outreach(user_id=u.id, company_id=company.id, contact_id=contact.id) for u in users]
+    )
+    await async_session.commit()
+    return company
+
+
+@pytest_asyncio.fixture
+async def targeted_by_user_company(async_session, user_client, pending_views):
+    """TargetedCo has an eligible contact and an existing outreach row owned by
+    `user_client`'s own account — it must be hidden from that user but stay
+    visible to everyone else."""
+    from sqlalchemy import select
+
+    from cold_email.database import RESEARCH_RESEARCHED, Company, CompanyContact, Outreach, User
+
+    user = (
+        await async_session.execute(select(User).where(User.email == "user@example.com"))
+    ).scalar_one()
+
+    company = Company(company_name="TargetedCo", research_status=RESEARCH_RESEARCHED)
+    async_session.add(company)
+    await async_session.commit()
+
+    contact = CompanyContact(
+        company_id=company.id,
+        email="t@targetedco.co",
+        first_name="Tay",
+        eligible=True,
+        confidence=90,
+    )
+    async_session.add(contact)
+    await async_session.commit()
+
+    outreach = Outreach(user_id=user.id, company_id=company.id, contact_id=contact.id)
+    async_session.add(outreach)
+    await async_session.commit()
+    return company
+
+
 @pytest.fixture
 def captured_drafts(monkeypatch):
     """Record create_draft's kwargs (and the creds it was called with) instead
