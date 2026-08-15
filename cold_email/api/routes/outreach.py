@@ -413,6 +413,59 @@ async def approve_outreach_api(
     }
 
 
+class BulkApproveRequest(BaseModel):
+    outreach_ids: list[str] = Field(min_length=1, max_length=200)
+    send_now: bool = False
+
+
+@router.post("/bulk-approve")
+async def bulk_approve(
+    payload: BulkApproveRequest,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_async_session),
+):
+    """Approve many drafts, spreading them across cadence slots in ONE walk.
+
+    Approving each individually would give every draft the same "next free
+    slot", making cadence useless at exactly the volume that makes it
+    necessary.
+    """
+    rows = (
+        (
+            await session.execute(
+                select(Outreach).where(
+                    Outreach.id.in_(payload.outreach_ids),
+                    Outreach.user_id == user.id,
+                    Outreach.status == OUTREACH_DRAFTED,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    slots = await _resolve_send_time(
+        session,
+        user,
+        ApproveRequest(send_now=payload.send_now),
+        count=len(rows),
+    )
+
+    for outreach, when in zip(rows, slots, strict=True):
+        outreach.status = OUTREACH_APPROVED
+        outreach.scheduled_send_at = when
+
+    await session.commit()
+
+    return {
+        "approved": [
+            {"outreach_id": str(o.id), "scheduled_send_at": w.isoformat() if w else None}
+            for o, w in zip(rows, slots, strict=True)
+        ],
+        "skipped": len(payload.outreach_ids) - len(rows),
+    }
+
+
 @router.post("/{outreach_id}/reject")
 async def reject_outreach_api(
     outreach_id: str,

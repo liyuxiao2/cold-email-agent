@@ -73,6 +73,77 @@ async def test_beyond_the_horizon_is_422(user_client, drafted_outreach):
 
 
 @pytest.mark.asyncio
+async def test_bulk_approve_spreads_slots_across_the_batch(
+    user_client, three_drafted_outreach, async_session, with_cadence
+):
+    """Without this, approving 30 drafts produces 30 identical slots and cadence
+    is unusable at exactly the volume that makes cadence necessary."""
+    ids = [str(o.id) for o in three_drafted_outreach]
+    response = await user_client.post("/api/outreach/bulk-approve", json={"outreach_ids": ids})
+    assert response.status_code == 200
+
+    for outreach in three_drafted_outreach:
+        await async_session.refresh(outreach)
+
+    slots = sorted(o.scheduled_send_at for o in three_drafted_outreach)
+    assert len(set(slots)) == 3  # all distinct
+    assert slots == sorted(slots)
+
+
+@pytest.mark.asyncio
+async def test_bulk_approve_without_a_cadence_leaves_every_slot_null(
+    user_client, three_drafted_outreach, async_session
+):
+    ids = [str(o.id) for o in three_drafted_outreach]
+    await user_client.post("/api/outreach/bulk-approve", json={"outreach_ids": ids})
+
+    for outreach in three_drafted_outreach:
+        await async_session.refresh(outreach)
+        assert outreach.scheduled_send_at is None
+
+
+@pytest.mark.asyncio
+async def test_unsatisfiable_cadence_is_409(
+    user_client, drafted_outreach, async_session, company_factory
+):
+    from sqlalchemy import select
+
+    from cold_email.database import OUTREACH_APPROVED, Outreach, User
+
+    user = (
+        await async_session.execute(select(User).where(User.email == "user@example.com"))
+    ).scalar_one()
+    user.send_cadence = {
+        "max_per_day": 1,
+        "days": [6],
+        "window_start": "09:00",
+        "window_end": "10:00",
+        "timezone": "America/Toronto",
+    }
+    await async_session.commit()
+
+    # Fill the horizon so no slot remains: far more approved rows than the
+    # ~13 Sundays inside the 90-day horizon holds. next_slot's fail-fast
+    # check compares len(scheduled) to the horizon's total capacity, so the
+    # exact dates these land on don't matter -- only the count does.
+    base = datetime.now(UTC)
+    for week in range(200):
+        company = await company_factory()
+        async_session.add(
+            Outreach(
+                user_id=user.id,
+                company_id=company.id,
+                status=OUTREACH_APPROVED,
+                scheduled_send_at=base + timedelta(weeks=week),
+            )
+        )
+    await async_session.commit()
+
+    response = await user_client.post(f"/api/outreach/{drafted_outreach.id}/approve")
+    assert response.status_code == 409
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "override",
     [

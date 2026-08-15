@@ -855,6 +855,30 @@ async def drafted_outreach(async_session, user_client):
 
 
 @pytest_asyncio.fixture
+async def three_drafted_outreach(async_session, user_client):
+    """Three 'drafted' outreach rows owned by user_client's own account --
+    UNIQUE(user_id, company_id) means each needs its own distinct company."""
+    from sqlalchemy import select
+
+    from cold_email.database import OUTREACH_DRAFTED, Company, Outreach, User
+
+    user = (
+        await async_session.execute(select(User).where(User.email == "user@example.com"))
+    ).scalar_one()
+
+    rows = []
+    for i in range(3):
+        company = Company(company_name=f"ScheduleBulkCo{i}")
+        async_session.add(company)
+        await async_session.commit()
+        outreach = Outreach(user_id=user.id, company_id=company.id, status=OUTREACH_DRAFTED)
+        async_session.add(outreach)
+        await async_session.commit()
+        rows.append(outreach)
+    return rows
+
+
+@pytest_asyncio.fixture
 async def with_cadence(async_session, user_client):
     """Set a daily cadence (see tests/test_scheduling_api.py's CADENCE) on
     user_client's own account, so approve's empty-body path has a slot to
