@@ -833,6 +833,28 @@ async def two_users_approved(async_session, pending_views):
 
 
 @pytest_asyncio.fixture
+async def drafted_outreach(async_session, user_client):
+    """A single 'drafted' outreach row owned by user_client's own account --
+    the minimal input the approve/schedule endpoints need."""
+    from sqlalchemy import select
+
+    from cold_email.database import OUTREACH_DRAFTED, Company, Outreach, User
+
+    user = (
+        await async_session.execute(select(User).where(User.email == "user@example.com"))
+    ).scalar_one()
+
+    company = Company(company_name="ScheduleCo")
+    async_session.add(company)
+    await async_session.commit()
+
+    outreach = Outreach(user_id=user.id, company_id=company.id, status=OUTREACH_DRAFTED)
+    async_session.add(outreach)
+    await async_session.commit()
+    return outreach
+
+
+@pytest_asyncio.fixture
 async def with_cadence(async_session, user_client):
     """Set a daily cadence (see tests/test_scheduling_api.py's CADENCE) on
     user_client's own account, so approve's empty-body path has a slot to

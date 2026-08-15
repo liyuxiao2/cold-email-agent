@@ -7,6 +7,7 @@ authorization check into an existence oracle.
 """
 
 import logging
+from datetime import UTC, datetime, timedelta
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -17,6 +18,7 @@ from sqlalchemy.orm import selectinload
 
 from cold_email.auth.crypto import decrypt, encrypt
 from cold_email.auth.deps import get_current_user
+from cold_email.cadence import HORIZON_DAYS, CadenceUnsatisfiable, next_slot
 from cold_email.config import settings
 from cold_email.contact_selection import select_contact
 from cold_email.database import (
@@ -24,6 +26,7 @@ from cold_email.database import (
     OUTREACH_DRAFTED,
     OUTREACH_QUEUED,
     OUTREACH_REJECTED,
+    OUTREACH_SENDING,
     RESEARCH_RESEARCHED,
     Company,
     Outreach,
@@ -319,32 +322,94 @@ async def create_outreach(
     return {"created": created, "skipped": skipped, "quota": {"used": used, "limit": limit}}
 
 
+class ApproveRequest(BaseModel):
+    scheduled_send_at: datetime | None = None
+    send_now: bool = False
+
+
+async def _resolve_send_time(
+    session: AsyncSession, user: User, payload: ApproveRequest | None, count: int = 1
+) -> list[datetime | None]:
+    """Decide when `count` approvals should go out.
+
+    | body                    | result                            |
+    |-------------------------|-----------------------------------|
+    | scheduled_send_at given | that instant                      |
+    | send_now: true          | NULL -> next scanner tick (<=5min)|
+    | empty, cadence set      | next free cadence slot(s)         |
+    | empty, no cadence       | NULL -> next scanner tick          |
+    """
+    if payload and payload.scheduled_send_at:
+        when = payload.scheduled_send_at
+        if when > datetime.now(UTC) + timedelta(days=HORIZON_DAYS):
+            raise HTTPException(
+                status_code=422, detail=f"Cannot schedule more than {HORIZON_DAYS} days ahead"
+            )
+        # A past timestamp is accepted deliberately -- it means "send now".
+        return [when] * count
+
+    if payload and payload.send_now:
+        return [None] * count
+
+    if not user.send_cadence:
+        return [None] * count
+
+    # Existing scheduled sends constrain the walk, so a batch spreads instead of
+    # stacking on the same slot.
+    existing = list(
+        (
+            await session.execute(
+                select(Outreach.scheduled_send_at).where(
+                    Outreach.user_id == user.id,
+                    Outreach.status.in_([OUTREACH_APPROVED, OUTREACH_SENDING]),
+                    Outreach.scheduled_send_at.isnot(None),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    slots: list[datetime | None] = []
+    now = datetime.now(UTC)
+    try:
+        for _ in range(count):
+            slot = next_slot(user.send_cadence, existing, now)
+            slots.append(slot)
+            existing.append(slot)  # so the next iteration sees it as taken
+    except CadenceUnsatisfiable as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    return slots
+
+
 @router.post("/{outreach_id}/approve")
 async def approve_outreach_api(
     outreach_id: str,
+    payload: ApproveRequest | None = None,
     session: AsyncSession = Depends(get_async_session),
     user: User = Depends(get_current_user),
 ):
-    """Approve THIS user's drafted outreach row and dispatch logistics task."""
+    """Approve a draft, optionally scheduling it.
+
+    Dispatch is left to send_due_task: pending_sends treats a NULL
+    scheduled_send_at as due, so an unscheduled approve goes out within 5
+    minutes. Dispatching directly here (as this used to) would bypass the
+    claim-before-dispatch guard and reintroduce the double-send risk the
+    claim exists to prevent.
+    """
     outreach = await _own_outreach(session, outreach_id, user)
+    [when] = await _resolve_send_time(session, user, payload)
 
     outreach.status = OUTREACH_APPROVED
+    outreach.scheduled_send_at = when
     await session.commit()
-
-    try:
-        from cold_email.workers.logistics import logistics_task
-
-        task = logistics_task.delay(outreach_id)
-        task_id = task.id
-    except Exception as e:
-        logger.warning(f"Could not dispatch logistics_task to Celery broker: {e}")
-        task_id = None
 
     return {
         "success": True,
         "outreach_id": outreach_id,
         "status": OUTREACH_APPROVED,
-        "task_id": task_id,
+        "scheduled_send_at": when.isoformat() if when else None,
     }
 
 

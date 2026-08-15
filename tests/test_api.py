@@ -169,13 +169,16 @@ async def test_cannot_mutate_another_users_outreach(
 
 @pytest.mark.asyncio
 async def test_approve_own_outreach(async_session, user_client, own_outreach):
-    with patch("cold_email.workers.logistics.logistics.logistics_task.delay") as mock_delay:
-        mock_delay.return_value.id = "logistics-task-789"
-        response = await user_client.post(f"/api/outreach/{own_outreach.id}/approve")
+    """Approve sets state only. Dispatch is send_due_task's job (the Beat
+    scanner claims 'approved' rows every 5 minutes), so no logistics_task
+    call happens here -- see tests/test_scheduling_api.py for the scheduling
+    semantics this endpoint now carries."""
+    response = await user_client.post(f"/api/outreach/{own_outreach.id}/approve")
 
     assert response.status_code == 200
     assert response.json()["success"] is True
     assert response.json()["status"] == "approved"
+    assert response.json()["scheduled_send_at"] is None
 
     await async_session.refresh(own_outreach)
     assert own_outreach.status == "approved"
