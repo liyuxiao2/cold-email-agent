@@ -1,3 +1,5 @@
+import pathlib
+
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
@@ -11,6 +13,9 @@ from cold_email.database import ROLE_ADMIN, ROLE_USER, Base, User, get_async_ses
 # matches "cold_email" inside the username (postgresql://cold_email:...@...),
 # producing a URL that authenticates as a nonexistent "cold_email_test" role.
 TEST_DB_URL = settings.database_url.rsplit("/", 1)[0] + "/cold_email_test"
+
+VIEWS_SQL_PATH = pathlib.Path(__file__).resolve().parent.parent / "migrations" / "views.sql"
+_VIEW_NAMES = ("pending_drafts", "pending_sends", "available_contacts")
 
 
 @pytest_asyncio.fixture(scope="function")
@@ -185,3 +190,32 @@ def sync_session_for(monkeypatch, async_session):
 
     session.close()
     sync_engine.dispose()
+
+
+@pytest.fixture
+def pending_views():
+    """Apply pending_drafts / pending_sends / available_contacts to the test DB.
+
+    async_session's create_all does not create database VIEWS at all (see
+    tests/test_views.py's docstring) — a test that drives a worker helper
+    which reads one of these views via raw SQL (e.g. fetch_pending_drafts,
+    fetch_send_inputs) needs them provisioned first, same as scripts/start.sh
+    does in production via scripts/apply_views.py.
+
+    Torn down before the test ends (not left for async_session's own
+    teardown): Postgres refuses DROP TABLE while a view still depends on it.
+    """
+    import sqlalchemy
+
+    engine = sqlalchemy.create_engine(TEST_DB_URL.replace("+asyncpg", "+psycopg2"))
+    with engine.connect() as conn:
+        conn.exec_driver_sql(VIEWS_SQL_PATH.read_text())
+        conn.commit()
+
+    yield
+
+    with engine.connect() as conn:
+        for view in _VIEW_NAMES:
+            conn.exec_driver_sql(f"DROP VIEW IF EXISTS {view} CASCADE")
+        conn.commit()
+    engine.dispose()
