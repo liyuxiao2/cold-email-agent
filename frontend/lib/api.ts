@@ -1,4 +1,4 @@
-export interface LeadDraft {
+export interface OutreachDraft {
   id: string;
   subject_line: string;
   body: string;
@@ -7,38 +7,58 @@ export interface LeadDraft {
   created_at?: string | null;
 }
 
-export interface LeadResearch {
+export interface OutreachResearch {
   hook?: string | null;
   tech_stack?: any;
   recent_news?: string | null;
 }
 
-export interface LeadItem {
+export interface OutreachCompany {
   id: string;
   company_name: string;
-  founder_name?: string | null;
-  founder_email?: string | null;
   company_url?: string | null;
   linkedin_url?: string | null;
   funding_stage?: string | null;
   headcount?: number | null;
+}
+
+export interface OutreachContact {
+  first_name?: string | null;
+  position?: string | null;
+  email?: string | null;
+}
+
+export interface OutreachItem {
+  outreach_id: string;
   status: string;
+  company: OutreachCompany | null;
+  contact: OutreachContact | null;
+  draft?: OutreachDraft | null;
+  research?: OutreachResearch | null;
   error_msg?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
-  draft?: LeadDraft | null;
-  research?: LeadResearch | null;
+}
+
+export interface CompanyItem {
+  id: string;
+  company_name: string;
+  founder_name?: string | null;
+  company_url?: string | null;
+  linkedin_url?: string | null;
+  funding_stage?: string | null;
+  headcount?: number | null;
+  industry?: string | null;
+  research_status: string;
+  error_msg?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+  research?: OutreachResearch | null;
 }
 
 export interface PipelineStats {
-  total: number;
-  found: number;
-  researched: number;
-  drafted: number;
-  approved: number;
-  sent: number;
-  rejected: number;
-  failed: number;
+  companies: Record<string, number>;
+  outreach: Record<string, number>;
 }
 
 export interface TaskAck {
@@ -47,8 +67,15 @@ export interface TaskAck {
   task_id?: string;
 }
 
-export interface LeadPage {
-  items: LeadItem[];
+export interface OutreachPage {
+  items: OutreachItem[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface CompanyPage {
+  items: CompanyItem[];
   total: number;
   limit: number;
   offset: number;
@@ -105,38 +132,38 @@ export function fetchPipelineStats(): Promise<PipelineStats> {
   return request<PipelineStats>('/api/pipeline/stats');
 }
 
-export function fetchDraftQueue(): Promise<LeadItem[]> {
-  return request<LeadItem[]>('/api/leads/drafts');
+export function fetchDraftQueue(): Promise<OutreachItem[]> {
+  return request<OutreachItem[]>('/api/outreach/drafts');
 }
 
-export function fetchLeads(params?: {
+export function fetchCompanies(params?: {
   status?: string;
   search?: string;
   limit?: number;
   offset?: number;
-}): Promise<LeadPage> {
+}): Promise<CompanyPage> {
   const query = new URLSearchParams();
   if (params?.status) query.set('status', params.status);
   if (params?.search) query.set('search', params.search);
   if (params?.limit) query.set('limit', params.limit.toString());
   if (params?.offset) query.set('offset', params.offset.toString());
 
-  return request<LeadPage>(`/api/leads?${query.toString()}`);
+  return request<CompanyPage>(`/api/companies?${query.toString()}`);
 }
 
-export function approveLead(leadId: string): Promise<TaskAck> {
-  return request<TaskAck>(`/api/leads/${leadId}/approve`, { method: 'POST' });
+export function approveOutreach(outreachId: string): Promise<TaskAck> {
+  return request<TaskAck>(`/api/outreach/${outreachId}/approve`, { method: 'POST' });
 }
 
-export function rejectLead(leadId: string, notes: string = ''): Promise<TaskAck> {
-  return request<TaskAck>(`/api/leads/${leadId}/reject`, {
+export function rejectOutreach(outreachId: string, notes: string = ''): Promise<TaskAck> {
+  return request<TaskAck>(`/api/outreach/${outreachId}/reject`, {
     method: 'POST',
     body: JSON.stringify({ notes }),
   });
 }
 
-export function regenerateDraft(leadId: string): Promise<TaskAck> {
-  return request<TaskAck>(`/api/leads/${leadId}/regenerate`, { method: 'POST' });
+export function regenerateDraft(outreachId: string): Promise<TaskAck> {
+  return request<TaskAck>(`/api/outreach/${outreachId}/regenerate`, { method: 'POST' });
 }
 
 export function triggerDiscovery(): Promise<TaskAck> {

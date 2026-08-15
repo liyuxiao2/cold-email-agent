@@ -8,8 +8,28 @@ interface PipelineStatsProps {
   loading: boolean;
 }
 
-/** Presentational: the pipeline counters bar. Owns no state. */
+/**
+ * Presentational: the pipeline counters bar. Owns no state.
+ *
+ * /api/pipeline/stats returns two dicts after the tenancy split: `companies`
+ * (research_status, GLOBAL — the whole pool) and `outreach` (status,
+ * PER-USER — only the caller's own rows). Both are shown, clearly labeled, so
+ * a user does not mistake the global pool size for their own progress.
+ */
 export default function PipelineStats({ stats, loading }: PipelineStatsProps) {
+  const companies = stats?.companies ?? {};
+  const outreach = stats?.outreach ?? {};
+
+  const tiles = [
+    { label: 'Companies Found', count: companies.found ?? 0, color: '#94a3b8', bg: 'rgba(148, 163, 184, 0.08)' },
+    { label: 'Companies Researched', count: companies.researched ?? 0, color: '#38bdf8', bg: 'rgba(56, 189, 248, 0.08)' },
+    { label: 'My Queue', count: outreach.queued ?? 0, color: '#818cf8', bg: 'rgba(129, 140, 248, 0.08)' },
+    { label: 'My Review Queue', count: outreach.drafted ?? 0, color: '#f59e0b', bg: 'rgba(245, 158, 11, 0.12)', highlight: true },
+    { label: 'My Approved', count: outreach.approved ?? 0, color: '#34d399', bg: 'rgba(52, 211, 153, 0.08)' },
+    { label: 'My Sent', count: outreach.sent ?? 0, color: '#a78bfa', bg: 'rgba(167, 139, 250, 0.08)' },
+    { label: 'My Rejected', count: outreach.rejected ?? 0, color: '#f87171', bg: 'rgba(248, 113, 113, 0.08)' },
+  ];
+
   return (
     <div
       style={{
@@ -19,15 +39,7 @@ export default function PipelineStats({ stats, loading }: PipelineStatsProps) {
         marginBottom: '2rem',
       }}
     >
-      {[
-        { label: 'Total Leads', count: stats?.total ?? 0, color: '#f8fafc', bg: 'var(--bg-secondary)' },
-        { label: 'Found', count: stats?.found ?? 0, color: '#94a3b8', bg: 'rgba(148, 163, 184, 0.08)' },
-        { label: 'Researched', count: stats?.researched ?? 0, color: '#38bdf8', bg: 'rgba(56, 189, 248, 0.08)' },
-        { label: 'Review Queue', count: stats?.drafted ?? 0, color: '#f59e0b', bg: 'rgba(245, 158, 11, 0.12)', highlight: true },
-        { label: 'Approved', count: stats?.approved ?? 0, color: '#34d399', bg: 'rgba(52, 211, 153, 0.08)' },
-        { label: 'Sent', count: stats?.sent ?? 0, color: '#a78bfa', bg: 'rgba(167, 139, 250, 0.08)' },
-        { label: 'Rejected', count: stats?.rejected ?? 0, color: '#f87171', bg: 'rgba(248, 113, 113, 0.08)' },
-      ].map((item, idx) => (
+      {tiles.map((item, idx) => (
         <div
           key={idx}
           style={{

@@ -12,20 +12,21 @@ import {
   AlertCircle,
 } from 'lucide-react';
 import {
-  LeadItem,
+  CompanyItem,
+  OutreachItem,
   PipelineStats as PipelineStatsData,
-  approveLead,
+  approveOutreach,
+  fetchCompanies,
   fetchDraftQueue,
-  fetchLeads,
   fetchPipelineStats,
   regenerateDraft,
-  rejectLead,
+  rejectOutreach,
   triggerDiscovery,
   triggerDrafting,
 } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import AdminPanel from '@/components/AdminPanel';
-import LeadExplorer from '@/components/LeadExplorer';
+import CompanyExplorer from '@/components/CompanyExplorer';
 import PipelineStats from '@/components/PipelineStats';
 import ReviewDeck from '@/components/ReviewDeck';
 
@@ -43,10 +44,10 @@ export default function DashboardPage() {
   const router = useRouter();
 
   const [stats, setStats] = useState<PipelineStatsData | null>(null);
-  const [draftQueue, setDraftQueue] = useState<LeadItem[]>([]);
-  const [allLeads, setAllLeads] = useState<LeadItem[]>([]);
+  const [draftQueue, setDraftQueue] = useState<OutreachItem[]>([]);
+  const [allCompanies, setAllCompanies] = useState<CompanyItem[]>([]);
   const [activeTab, setActiveTab] = useState<'review' | 'explorer'>('review');
-  // The explorer's filters live here, not in LeadExplorer: that component
+  // The explorer's filters live here, not in CompanyExplorer: that component
   // unmounts on a tab switch, so local state would reset them each time.
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -78,11 +79,11 @@ export default function DashboardPage() {
     }
   }, [showNotification]);
 
-  const loadExplorerLeads = useCallback(async () => {
+  const loadExplorerCompanies = useCallback(async () => {
     try {
       const filter = statusFilter === 'all' ? undefined : statusFilter;
-      const data = await fetchLeads({ status: filter, search: searchQuery || undefined, limit: 100 });
-      setAllLeads(data.items);
+      const data = await fetchCompanies({ status: filter, search: searchQuery || undefined, limit: 100 });
+      setAllCompanies(data.items);
     } catch (err: unknown) {
       console.error(err);
     }
@@ -99,17 +100,31 @@ export default function DashboardPage() {
 
   useEffect(() => {
     if (activeTab === 'explorer') {
-      loadExplorerLeads();
+      loadExplorerCompanies();
     }
-  }, [activeTab, loadExplorerLeads]);
+  }, [activeTab, loadExplorerCompanies]);
 
-  const handleApprove = async (lead: LeadItem) => {
+  /** Bumps the per-user `outreach` half of stats; `companies` is untouched —
+      these actions never change the global research pool. */
+  const bumpOutreachStats = (from: string, to: string) => {
+    if (!stats) return;
+    setStats({
+      ...stats,
+      outreach: {
+        ...stats.outreach,
+        [from]: Math.max(0, (stats.outreach[from] ?? 0) - 1),
+        [to]: (stats.outreach[to] ?? 0) + 1,
+      },
+    });
+  };
+
+  const handleApprove = async (lead: OutreachItem) => {
     try {
-      setActionLoading(lead.id);
-      await approveLead(lead.id);
-      setDraftQueue((prev) => prev.filter((item) => item.id !== lead.id));
-      if (stats) setStats({ ...stats, drafted: Math.max(0, stats.drafted - 1), approved: stats.approved + 1 });
-      showNotification(`Approved outreach for ${lead.company_name}! Dispatched logistics task.`);
+      setActionLoading(lead.outreach_id);
+      await approveOutreach(lead.outreach_id);
+      setDraftQueue((prev) => prev.filter((item) => item.outreach_id !== lead.outreach_id));
+      bumpOutreachStats('drafted', 'approved');
+      showNotification(`Approved outreach for ${lead.company?.company_name ?? 'company'}! Dispatched logistics task.`);
     } catch (err: unknown) {
       showNotification(`Failed to approve: ${errorMessage(err)}`, 'error');
     } finally {
@@ -118,12 +133,12 @@ export default function DashboardPage() {
   };
 
   /** Returns true on success so ReviewDeck knows whether to close its modal. */
-  const handleReject = async (leadId: string, notes: string): Promise<boolean> => {
+  const handleReject = async (outreachId: string, notes: string): Promise<boolean> => {
     try {
-      setActionLoading(leadId);
-      await rejectLead(leadId, notes);
-      setDraftQueue((prev) => prev.filter((item) => item.id !== leadId));
-      if (stats) setStats({ ...stats, drafted: Math.max(0, stats.drafted - 1), rejected: stats.rejected + 1 });
+      setActionLoading(outreachId);
+      await rejectOutreach(outreachId, notes);
+      setDraftQueue((prev) => prev.filter((item) => item.outreach_id !== outreachId));
+      bumpOutreachStats('drafted', 'rejected');
       showNotification(`Rejected lead.`);
       return true;
     } catch (err: unknown) {
@@ -134,13 +149,13 @@ export default function DashboardPage() {
     }
   };
 
-  const handleRegenerate = async (lead: LeadItem) => {
+  const handleRegenerate = async (lead: OutreachItem) => {
     try {
-      setActionLoading(lead.id);
-      await regenerateDraft(lead.id);
-      setDraftQueue((prev) => prev.filter((item) => item.id !== lead.id));
-      if (stats) setStats({ ...stats, drafted: Math.max(0, stats.drafted - 1), researched: stats.researched + 1 });
-      showNotification(`Draft queued for re-generation (${lead.company_name})`);
+      setActionLoading(lead.outreach_id);
+      await regenerateDraft(lead.outreach_id);
+      setDraftQueue((prev) => prev.filter((item) => item.outreach_id !== lead.outreach_id));
+      bumpOutreachStats('drafted', 'queued');
+      showNotification(`Draft queued for re-generation (${lead.company?.company_name ?? 'company'})`);
     } catch (err: unknown) {
       showNotification(`Failed to regenerate: ${errorMessage(err)}`, 'error');
     } finally {
@@ -388,7 +403,7 @@ export default function DashboardPage() {
           }}
         >
           <Building size={16} />
-          All Leads Explorer
+          Company Explorer
         </button>
       </div>
 
@@ -406,10 +421,10 @@ export default function DashboardPage() {
         />
       )}
 
-      {/* Tab Content: All Leads Explorer */}
+      {/* Tab Content: Company Explorer (the global pool) */}
       {activeTab === 'explorer' && (
-        <LeadExplorer
-          leads={allLeads}
+        <CompanyExplorer
+          companies={allCompanies}
           statusFilter={statusFilter}
           searchQuery={searchQuery}
           onStatusFilterChange={setStatusFilter}

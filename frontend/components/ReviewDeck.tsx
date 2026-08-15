@@ -11,17 +11,17 @@ import {
   Copy,
   Check,
 } from 'lucide-react';
-import type { LeadDraft, LeadItem } from '@/lib/api';
+import type { OutreachDraft, OutreachItem } from '@/lib/api';
 
 interface ReviewDeckProps {
-  leads: LeadItem[];
+  leads: OutreachItem[];
   loading: boolean;
-  /** id of the lead whose action is in flight, or null */
+  /** outreach_id of the row whose action is in flight, or null */
   actionLoading: string | null;
-  onApprove: (lead: LeadItem) => void;
+  onApprove: (lead: OutreachItem) => void;
   /** Resolves true when the rejection succeeded, so the modal only closes then. */
-  onReject: (leadId: string, notes: string) => Promise<boolean>;
-  onRegenerate: (lead: LeadItem) => void;
+  onReject: (outreachId: string, notes: string) => Promise<boolean>;
+  onRegenerate: (lead: OutreachItem) => void;
   onTriggerDiscovery: () => void;
   /** Gates the empty-state Run Discovery button. Cosmetic only — see below. */
   isAdmin: boolean;
@@ -43,11 +43,11 @@ export default function ReviewDeck({
   onTriggerDiscovery,
   isAdmin,
 }: ReviewDeckProps) {
-  const [rejectingLeadId, setRejectingLeadId] = useState<string | null>(null);
+  const [rejectingOutreachId, setRejectingOutreachId] = useState<string | null>(null);
   const [rejectNotes, setRejectNotes] = useState<string>('');
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
-  const copyDraft = (draft: LeadDraft | null | undefined, id: string) => {
+  const copyDraft = (draft: OutreachDraft | null | undefined, id: string) => {
     if (!draft) return;
     const text = `Subject: ${draft.subject_line}\n\n${draft.body}`;
     navigator.clipboard.writeText(text);
@@ -56,10 +56,10 @@ export default function ReviewDeck({
   };
 
   const handleRejectConfirm = async () => {
-    if (!rejectingLeadId) return;
-    const succeeded = await onReject(rejectingLeadId, rejectNotes);
+    if (!rejectingOutreachId) return;
+    const succeeded = await onReject(rejectingOutreachId, rejectNotes);
     if (succeeded) {
-      setRejectingLeadId(null);
+      setRejectingOutreachId(null);
       setRejectNotes('');
     }
   };
@@ -112,7 +112,7 @@ export default function ReviewDeck({
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
           {leads.map((lead) => (
             <div
-              key={lead.id}
+              key={lead.outreach_id}
               style={{
                 backgroundColor: 'var(--bg-card)',
                 border: '1px solid var(--border-color)',
@@ -129,10 +129,10 @@ export default function ReviewDeck({
                 <div>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                     <h2 style={{ fontSize: '1.25rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      {lead.company_name}
-                      {lead.company_url && (
+                      {lead.company?.company_name ?? 'Unknown company'}
+                      {lead.company?.company_url && (
                         <a
-                          href={lead.company_url}
+                          href={lead.company.company_url}
                           target="_blank"
                           rel="noreferrer"
                           style={{ color: 'var(--text-muted)', display: 'inline-flex' }}
@@ -156,19 +156,22 @@ export default function ReviewDeck({
                   </div>
 
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '0.5rem', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-                    {lead.funding_stage && (
+                    {lead.company?.funding_stage && (
                       <span style={{ padding: '2px 8px', borderRadius: '4px', backgroundColor: 'var(--bg-secondary)' }}>
-                        {lead.funding_stage}
+                        {lead.company.funding_stage}
                       </span>
                     )}
-                    {lead.headcount && (
+                    {lead.company?.headcount && (
                       <span style={{ padding: '2px 8px', borderRadius: '4px', backgroundColor: 'var(--bg-secondary)' }}>
-                        {lead.headcount} employees
+                        {lead.company.headcount} employees
                       </span>
                     )}
                   </div>
 
-                  {/* Founder Info */}
+                  {/* Contact Info — WHICH human this email is going to. Without
+                      this a user cannot tell whether they are writing to the
+                      founder or the CTO: the visible payoff of contact
+                      spreading over a single founder_email. */}
                   <div
                     style={{
                       marginTop: '1.2rem',
@@ -180,16 +183,21 @@ export default function ReviewDeck({
                   >
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 600, fontSize: '0.9rem' }}>
                       <User size={14} color="#818cf8" />
-                      {lead.founder_name || 'Founder'}
+                      {lead.contact?.first_name || 'Contact'}
+                      {lead.contact?.position && (
+                        <span style={{ fontWeight: 400, color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
+                          — {lead.contact.position}
+                        </span>
+                      )}
                     </div>
-                    {lead.founder_email && (
+                    {lead.contact?.email && (
                       <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
-                        {lead.founder_email}
+                        {lead.contact.email}
                       </div>
                     )}
-                    {lead.linkedin_url && (
+                    {lead.company?.linkedin_url && (
                       <a
-                        href={lead.linkedin_url}
+                        href={lead.company.linkedin_url}
                         target="_blank"
                         rel="noreferrer"
                         style={{ fontSize: '0.75rem', color: '#818cf8', display: 'inline-flex', alignItems: 'center', gap: '4px', marginTop: '6px' }}
@@ -216,7 +224,7 @@ export default function ReviewDeck({
                 <div style={{ display: 'flex', gap: '8px', marginTop: '1.5rem' }}>
                   <button
                     onClick={() => onApprove(lead)}
-                    disabled={actionLoading === lead.id}
+                    disabled={actionLoading === lead.outreach_id}
                     style={{
                       flex: 1,
                       display: 'flex',
@@ -239,8 +247,8 @@ export default function ReviewDeck({
                   </button>
 
                   <button
-                    onClick={() => setRejectingLeadId(lead.id)}
-                    disabled={actionLoading === lead.id}
+                    onClick={() => setRejectingOutreachId(lead.outreach_id)}
+                    disabled={actionLoading === lead.outreach_id}
                     style={{
                       padding: '10px 14px',
                       borderRadius: '8px',
@@ -257,7 +265,7 @@ export default function ReviewDeck({
 
                   <button
                     onClick={() => onRegenerate(lead)}
-                    disabled={actionLoading === lead.id}
+                    disabled={actionLoading === lead.outreach_id}
                     title="Regenerate Draft"
                     style={{
                       padding: '10px 14px',
@@ -293,21 +301,33 @@ export default function ReviewDeck({
                       Personalized Outreach
                     </span>
                     <button
-                      onClick={() => copyDraft(lead.draft, lead.id)}
+                      onClick={() => copyDraft(lead.draft, lead.outreach_id)}
                       style={{
                         display: 'flex',
                         alignItems: 'center',
                         gap: '4px',
                         background: 'none',
                         border: 'none',
-                        color: copiedId === lead.id ? '#10b981' : 'var(--text-muted)',
+                        color: copiedId === lead.outreach_id ? '#10b981' : 'var(--text-muted)',
                         fontSize: '0.75rem',
                         cursor: 'pointer',
                       }}
                     >
-                      {copiedId === lead.id ? <Check size={13} /> : <Copy size={13} />}
-                      {copiedId === lead.id ? 'Copied' : 'Copy'}
+                      {copiedId === lead.outreach_id ? <Check size={13} /> : <Copy size={13} />}
+                      {copiedId === lead.outreach_id ? 'Copied' : 'Copy'}
                     </button>
+                  </div>
+
+                  {/* Which human this email is going to. Without this a user
+                      cannot tell whether they are writing to the founder or
+                      the CTO — the visible payoff of contact spreading. */}
+                  <div
+                    className="mb-2 text-sm text-gray-600"
+                    style={{ marginBottom: '0.5rem', fontSize: '0.85rem', color: 'var(--text-secondary)' }}
+                  >
+                    To: <strong>{lead.contact?.first_name ?? 'Unknown'}</strong>
+                    {lead.contact?.position && <> — {lead.contact.position}</>}
+                    {lead.contact?.email && <> ({lead.contact.email})</>}
                   </div>
 
                   <div style={{ fontSize: '0.9rem', fontWeight: 700, color: '#f8fafc', marginBottom: '0.75rem' }}>
@@ -342,7 +362,7 @@ export default function ReviewDeck({
       )}
 
       {/* Reject Modal */}
-      {rejectingLeadId && (
+      {rejectingOutreachId && (
         <div
           style={{
             position: 'fixed',
@@ -388,7 +408,7 @@ export default function ReviewDeck({
             />
             <div style={{ display: 'flex', gap: '10px', marginTop: '1.25rem', justifyContent: 'flex-end' }}>
               <button
-                onClick={() => setRejectingLeadId(null)}
+                onClick={() => setRejectingOutreachId(null)}
                 style={{
                   padding: '8px 16px',
                   borderRadius: '8px',
