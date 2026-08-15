@@ -6,47 +6,72 @@ so that research.py only contains Celery orchestration logic.
 
 import logging
 
-from cold_email.database import Lead, Research, get_sync_session
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+from cold_email.database import Company, CompanyContact, Research, get_sync_session
+from cold_email.workers.research.helpers.contact_finder import ClassifiedContact
 
 logger = logging.getLogger(__name__)
 
 
-def fetch_lead(lead_id: str) -> Lead | None:
-    """Fetch a lead from the database by its ID."""
+def fetch_company(company_id: str) -> Company | None:
+    """Fetch a company from the database by its ID."""
     with get_sync_session() as session:
-        lead = session.get(Lead, lead_id)
-        logger.info(f"Lead fetched from DB: {lead}")
-    return lead
+        company = session.get(Company, company_id)
+        logger.info(f"Company fetched from DB: {company}")
+    return company
 
 
-def save_founder_contact(lead_id: str, founder_name: str | None, founder_email: str) -> None:
-    """Persist the founder email (and name, if research found one) on the lead.
+def save_contacts(company_id: str, contacts: list[ClassifiedContact]) -> int:
+    """Bulk-upsert a company's contact pool. Returns the number inserted.
 
-    founder_email is what drafting requires; we also backfill founder_name when
-    research resolved a better one than discovery had, for email personalization.
+    ON CONFLICT DO NOTHING against UNIQUE(company_id, email): a retried research
+    task must not duplicate contacts, and re-classifying an existing row is a
+    separate concern from discovering one.
     """
+    if not contacts:
+        return 0
+
+    rows = [
+        {
+            "company_id": company_id,
+            "email": c.contact.email,
+            "first_name": c.contact.first_name,
+            "last_name": c.contact.last_name,
+            "position": c.contact.position,
+            "seniority": c.contact.seniority,
+            "department": c.contact.department,
+            "confidence": c.contact.confidence,
+            "is_founder": c.is_founder,
+            "eligible": c.eligible,
+        }
+        for c in contacts
+    ]
+
     with get_sync_session() as session:
-        lead = session.get(Lead, lead_id)
-        if lead:
-            lead.founder_email = founder_email
-            if founder_name:
-                lead.founder_name = founder_name
-            session.commit()
-            logger.info(f"Founder contact saved for lead {lead_id}: {founder_email}")
+        statement = (
+            pg_insert(CompanyContact)
+            .values(rows)
+            .on_conflict_do_nothing(index_elements=["company_id", "email"])
+        )
+        result = session.execute(statement)
+        session.commit()
+        logger.info(f"Saved {result.rowcount or 0} new contact(s) for company {company_id}")
+        return result.rowcount or 0
 
 
 def commit_research(
-    lead_id: str,
+    company_id: str,
     tech_stack: list | None,
     recent_news: str | None,
     hook: str | None,
     raw_content: str | None,
 ) -> None:
-    """Insert a new Research row for the given lead."""
+    """Insert a new Research row for the given company."""
     with get_sync_session() as session:
         session.add(
             Research(
-                lead_id=lead_id,
+                company_id=company_id,
                 tech_stack=tech_stack,
                 recent_news=recent_news,
                 hook=hook,
@@ -54,4 +79,4 @@ def commit_research(
             )
         )
         session.commit()
-        logger.info(f"Research data for lead {lead_id} saved to DB")
+        logger.info(f"Research data for company {company_id} saved to DB")
