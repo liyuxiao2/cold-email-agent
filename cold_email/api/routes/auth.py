@@ -27,6 +27,7 @@ from cold_email.auth.session import (
     mint_state,
     verify_state,
 )
+from cold_email.auth.signup_policy import is_signup_allowed
 from cold_email.config import settings
 from cold_email.database import User, get_async_session
 
@@ -42,6 +43,13 @@ async def upsert_user(session: AsyncSession, identity: GoogleIdentity) -> User:
     seeded before that person's first sign-in. The seeded row's `role` is
     preserved — silently demoting the only admin would lock discovery and
     research away from everyone.
+
+    The email fallback only ever claims a row with `google_sub IS NULL`
+    (never-yet-bound). Without that guard, a row already bound to sub 'A'
+    would miss the sub lookup for a sign-in with a different sub 'B' but the
+    same email, fall through to the email lookup, and get its google_sub
+    silently overwritten to 'B' — an account takeover that also hands over
+    that row's stored (decryptable) Gmail refresh token.
     """
     user = (
         await session.execute(select(User).where(User.google_sub == identity.sub))
@@ -49,7 +57,9 @@ async def upsert_user(session: AsyncSession, identity: GoogleIdentity) -> User:
 
     if user is None:
         user = (
-            await session.execute(select(User).where(User.email == identity.email))
+            await session.execute(
+                select(User).where(User.email == identity.email, User.google_sub.is_(None))
+            )
         ).scalar_one_or_none()
 
     if user is None:
@@ -96,6 +106,15 @@ async def google_callback(
         logger.warning(f"OAuth exchange failed: {exc}")
         return RedirectResponse(
             url=f"{settings.frontend_url}/login?error=oauth_failed",
+            status_code=status.HTTP_302_FOUND,
+        )
+
+    if not is_signup_allowed(identity.email):
+        # No DB row is created for a denied identity. 302, not 403: the
+        # caller is a browser mid-redirect, not an API client.
+        logger.warning(f"Denied sign-in for unauthorized email: {identity.email}")
+        return RedirectResponse(
+            url=f"{settings.frontend_url}/login?error=not_allowed",
             status_code=status.HTTP_302_FOUND,
         )
 

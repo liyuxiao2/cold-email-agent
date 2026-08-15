@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from cold_email.auth.deps import get_current_user
+from cold_email.auth.deps import get_current_user, require_admin
 from cold_email.database import DeadLetter, Lead, User, get_async_session
 
 logger = logging.getLogger(__name__)
@@ -56,7 +56,7 @@ async def retry_dead_letter(
         None, description="Only retry this stage (research/drafting/logistics)"
     ),
     session: AsyncSession = Depends(get_async_session),
-    user: User = Depends(get_current_user),
+    admin: User = Depends(require_admin),
 ):
     """Re-dispatch dead-lettered tasks: reset each lead to its stage's input
     state, re-enqueue the worker, and clear the row. A task that fails again is

@@ -4,6 +4,7 @@ ADMIN_ONLY = [
     "/api/pipeline/discovery",
     "/api/pipeline/research",
     "/api/pipeline/drafting",
+    "/api/dlq/retry",
 ]
 
 USER_ROUTES = [
@@ -36,8 +37,11 @@ async def test_admin_routes_reject_plain_users(user_client, path):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("path", ADMIN_ONLY)
 async def test_admin_routes_accept_admins(admin_client, path, monkeypatch):
-    # Celery is not running in tests; the routes already tolerate a broker
-    # failure and return a null task_id.
+    # 200 requires a reachable Celery broker: unlike leads.py's approve/
+    # regenerate, these routes catch a dispatch failure and re-raise as HTTP
+    # 500 rather than tolerating it. Redis is reachable here (running locally
+    # via `make up`, or as CI's service container), so 200 is the right
+    # expectation.
     assert (await admin_client.post(path)).status_code == 200
 
 

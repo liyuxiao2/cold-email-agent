@@ -70,11 +70,25 @@ const getApiBaseUrl = () => {
  * the 401 -> /login redirect.
  */
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const method = (init?.method ?? 'GET').toUpperCase();
+
+  // Simple GET/HEAD requests with no custom header are not CORS-preflighted;
+  // adding Content-Type promotes them into preflighted ones, adding an extra
+  // OPTIONS round-trip to every fetch. Every other method — INCLUDING the
+  // several intentionally bodyless POSTs here (approve, regenerate,
+  // discovery, drafting) — keeps sending it: a planned follow-up may rely on
+  // "requires Content-Type: application/json" as a CSRF defence, so do not
+  // "simplify" this to "only when a body is present".
+  const headers =
+    method === 'GET' || method === 'HEAD'
+      ? { ...init?.headers }
+      : { 'Content-Type': 'application/json', ...init?.headers };
+
   const response = await fetch(`${getApiBaseUrl()}${path}`, {
     ...init,
     cache: 'no-store',
     credentials: 'include', // required: cookies are not sent cross-origin by default
-    headers: { 'Content-Type': 'application/json', ...init?.headers },
+    headers,
   });
 
   if (response.status === 401 && typeof window !== 'undefined') {
