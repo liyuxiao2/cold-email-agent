@@ -16,7 +16,8 @@ from cold_email.workers.shared.views import PendingDraft
 logger = logging.getLogger(__name__)
 
 _CLAIM_SQL = text(
-    "UPDATE outreach SET status = :drafting WHERE id IN :ids AND status = :queued RETURNING id"
+    "UPDATE outreach SET status = :drafting, updated_at = now() "
+    "WHERE id IN :ids AND status = :queued RETURNING id"
 ).bindparams(bindparam("ids", expanding=True))
 
 
@@ -31,6 +32,13 @@ def claim_pending_drafts(outreach_ids: list[str]) -> set[str]:
     has already flipped its status — so only one of them ever drafts it.
     Callers must filter their own row list down to the returned ids before
     doing any work.
+
+    Sets updated_at = now() explicitly: this is a raw text() UPDATE, which
+    bypasses the ORM unit-of-work entirely, so Outreach.updated_at's
+    `onupdate=func.now()` never fires on its own. Without the explicit set
+    here, drafting_recovery_task would have no honest way to tell how long a
+    row has been claimed, and could never distinguish a claim that just
+    started from one whose worker crashed 40 minutes ago.
     """
     if not outreach_ids:
         return set()

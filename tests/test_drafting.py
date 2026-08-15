@@ -495,6 +495,139 @@ async def test_recovery_sweep_survives_one_users_dispatch_failure(
 
 
 @pytest.mark.asyncio
+async def test_recovery_sweep_reclaims_stale_drafting_claim(
+    async_session, sync_session_for, pending_views
+):
+    """A hard Celery process crash (SIGKILL, OOM, container eviction) between
+    claim_pending_drafts moving a row to 'drafting' and the row finishing is
+    NOT a Python exception, so drafting_task's own per-row `except Exception`
+    never runs to release the claim. Without this reclaim path the row would
+    sit at 'drafting' forever — invisible to pending_drafts, invisible to the
+    stale-'queued' query, no error_msg, no DLQ row."""
+    from datetime import UTC, datetime, timedelta
+
+    from cold_email.database import OUTREACH_DRAFTING, OUTREACH_QUEUED, ROLE_USER, User
+
+    user = User(email="crash-drafter@example.com", google_sub="sub-crash-drafter", role=ROLE_USER)
+    async_session.add(user)
+    await async_session.commit()
+
+    outreach = await _add_queued_outreach(async_session, user.id, "CrashCo", "crash@crash.co")
+    outreach.status = OUTREACH_DRAFTING
+    outreach.updated_at = datetime.now(UTC) - timedelta(minutes=45)
+    await async_session.commit()
+
+    from cold_email.workers.drafting.drafting import drafting_recovery_task
+
+    result = drafting_recovery_task()
+
+    await async_session.refresh(outreach)
+    assert outreach.status == OUTREACH_QUEUED
+    assert outreach.reclaim_count == 1
+    assert outreach.error_msg is not None
+    assert result["reclaimed"] == 1
+
+
+@pytest.mark.asyncio
+async def test_recovery_sweep_leaves_recent_drafting_claim_alone(
+    async_session, sync_session_for, pending_views, monkeypatch
+):
+    """A row claimed moments ago is a sweep genuinely in flight, not a crashed
+    one. Reclaiming it anyway would put it back in 'queued' while the live
+    sweep still holds it and is about to finish drafting it — recreating the
+    exact double-draft the claim's compare-and-swap exists to prevent."""
+    from cold_email.database import OUTREACH_DRAFTING, ROLE_USER, User
+
+    user = User(email="in-flight@example.com", google_sub="sub-in-flight", role=ROLE_USER)
+    async_session.add(user)
+    await async_session.commit()
+
+    outreach = await _add_queued_outreach(async_session, user.id, "InFlightCo", "flight@co.com")
+    outreach.status = OUTREACH_DRAFTING
+    # No explicit updated_at: the ORM's onupdate=func.now() stamps it "now" on
+    # this very commit, same as the real claim_pending_drafts UPDATE would.
+    await async_session.commit()
+
+    dispatched = []
+    monkeypatch.setattr(
+        "cold_email.workers.drafting.drafting.drafting_task.delay",
+        lambda uid: dispatched.append(uid),
+    )
+
+    from cold_email.workers.drafting.drafting import drafting_recovery_task
+
+    result = drafting_recovery_task()
+
+    await async_session.refresh(outreach)
+    assert outreach.status == OUTREACH_DRAFTING
+    assert outreach.reclaim_count == 0
+    assert outreach.error_msg is None
+    assert result["reclaimed"] == 0
+    assert str(user.id) not in dispatched
+
+
+@pytest.mark.asyncio
+async def test_recovery_sweep_dead_letters_after_reclaim_cap(
+    async_session, sync_session_for, pending_views, monkeypatch
+):
+    """A row that keeps crashing its worker must not be requeued forever —
+    that recreates exactly the silent-infinite-retry problem the DLQ exists to
+    prevent. Once it has already been reclaimed MAX_DRAFTING_RECLAIMS times,
+    the next stale detection must dead-letter it via fail_outreach instead of
+    handing it back to 'queued' again."""
+    from datetime import UTC, datetime, timedelta
+
+    from sqlalchemy import select
+
+    from cold_email.database import (
+        OUTREACH_DRAFTING,
+        OUTREACH_FAILED,
+        ROLE_USER,
+        DeadLetter,
+        User,
+    )
+    from cold_email.workers.drafting.constants import DRAFTING
+    from cold_email.workers.drafting.drafting import MAX_DRAFTING_RECLAIMS
+
+    user = User(email="doomed@example.com", google_sub="sub-doomed", role=ROLE_USER)
+    async_session.add(user)
+    await async_session.commit()
+
+    outreach = await _add_queued_outreach(async_session, user.id, "DoomedCo", "doom@doom.co")
+    outreach.status = OUTREACH_DRAFTING
+    outreach.reclaim_count = MAX_DRAFTING_RECLAIMS
+    outreach.updated_at = datetime.now(UTC) - timedelta(minutes=45)
+    await async_session.commit()
+
+    dispatched = []
+    monkeypatch.setattr(
+        "cold_email.workers.drafting.drafting.drafting_task.delay",
+        lambda uid: dispatched.append(uid),
+    )
+
+    from cold_email.workers.drafting.drafting import drafting_recovery_task
+
+    result = drafting_recovery_task()
+
+    await async_session.refresh(outreach)
+    assert outreach.status == OUTREACH_FAILED
+    assert result["dead_lettered"] == 1
+    assert str(user.id) not in dispatched
+
+    dl_rows = (
+        (
+            await async_session.execute(
+                select(DeadLetter).where(DeadLetter.outreach_id == outreach.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(dl_rows) == 1
+    assert dl_rows[0].stage == DRAFTING
+
+
+@pytest.mark.asyncio
 async def test_byok_users_credentials_reach_the_llm(
     async_session,
     sync_session_for,

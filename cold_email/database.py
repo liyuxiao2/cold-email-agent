@@ -115,7 +115,11 @@ OUTREACH_QUEUED = "queued"
 # before working it, so a second concurrent dispatch reading the same
 # still-queued rows sees them already gone and skips them instead of drafting
 # them a second time. A transient failure on a claimed row reverts it to
-# 'queued' rather than leaving it stuck here.
+# 'queued' rather than leaving it stuck here. A row that never gets that
+# chance — a hard process kill (OOM, SIGKILL, container eviction) between the
+# claim and the row finishing, not a Python exception — is instead reclaimed
+# by drafting_recovery_task once Outreach.updated_at shows the claim is stale
+# (see Outreach.reclaim_count).
 OUTREACH_DRAFTING = "drafting"
 OUTREACH_DRAFTED = "drafted"
 OUTREACH_APPROVED = "approved"
@@ -216,6 +220,14 @@ class Outreach(Base):
     status = Column(String, nullable=False, default=OUTREACH_QUEUED)
     scheduled_send_at = Column(DateTime(timezone=True))  # NULL = send immediately
     error_msg = Column(Text)
+    # How many times drafting_recovery_task has reclaimed this row from a
+    # stale 'drafting' claim back to 'queued'. Distinct from
+    # dead_letter.retry_count (which counts human-initiated retries of an
+    # already-dead-lettered row via POST /api/dlq/retry): this counts
+    # crash-recovery attempts that happen BEFORE the row is ever dead-lettered,
+    # so it must live on the row itself, not on a DLQ entry that doesn't exist
+    # yet. Caps the reclaim loop — see MAX_DRAFTING_RECLAIMS.
+    reclaim_count = Column(Integer, nullable=False, default=0)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

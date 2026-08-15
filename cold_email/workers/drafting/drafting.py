@@ -35,7 +35,14 @@ from celery import shared_task
 from sqlalchemy import text
 
 from cold_email.auth.gmail_creds import resolve_gmail_credentials
-from cold_email.database import OUTREACH_DRAFTED, OUTREACH_QUEUED, Profile, User, get_sync_session
+from cold_email.database import (
+    OUTREACH_DRAFTED,
+    OUTREACH_DRAFTING,
+    OUTREACH_QUEUED,
+    Profile,
+    User,
+    get_sync_session,
+)
 from cold_email.resume_store import get_resume_sync
 from cold_email.sender_profile import SenderProfile
 from cold_email.workers.drafting.constants import DRAFTING, ERR_EMPTY_DRAFT
@@ -59,8 +66,20 @@ logger = logging.getLogger(__name__)
 
 # How stale a 'queued' row must be before the recovery sweep treats its
 # dispatch as lost. Long enough that an in-flight sweep (drafting takes real
-# LLM + Gmail round-trips per row) is never mistaken for a dropped one.
+# LLM + Gmail round-trips per row) is never mistaken for a dropped one. Also
+# used as the staleness bound for a claimed 'drafting' row: the same
+# reasoning applies — a sweep genuinely working a row is never mistaken for
+# one whose worker was killed mid-claim.
 RECOVERY_STALE_MINUTES = 30
+
+# How many times a single row may be reclaimed from a stale 'drafting' claim
+# back to 'queued' before the recovery sweep gives up on it. Reclaiming is
+# safe (the claim's compare-and-swap prevents a concurrent duplicate, and no
+# Gmail draft exists until after the LLM call succeeds) but not infinitely so:
+# a row that keeps landing back at 'drafting' and going stale again is a row
+# that keeps crashing its worker, and requeuing it forever would recreate the
+# exact silent-infinite-retry problem the DLQ exists to prevent.
+MAX_DRAFTING_RECLAIMS = 3
 
 
 @dataclass(frozen=True)
@@ -240,27 +259,79 @@ def drafting_task(self, user_id: str) -> dict:
             handle_transient_failure(outreach_id, exc)
             # Release this sweep's claim: handle_transient_failure only
             # records the reason and never touches status, so without this
-            # the row would stay stuck at 'drafting' — invisible to both the
-            # next sweep's pending_drafts read and the recovery sweep, which
-            # only ever look at 'queued' rows.
+            # the row would stay stuck at 'drafting' — invisible to the next
+            # sweep's pending_drafts read (a Python exception is handled
+            # immediately, right here; only a hard process crash that skips
+            # this except block entirely needs drafting_recovery_task's
+            # separate stale-'drafting' reclaim below).
             update_outreach_status(outreach_id, OUTREACH_QUEUED)
 
     return {"status": "success", "drafted": drafted}
 
 
+_RECLAIM_STALE_DRAFTING_SQL = text("""
+    UPDATE outreach
+    SET status = :queued, reclaim_count = reclaim_count + 1, error_msg = :error_msg
+    WHERE status = :drafting
+      AND updated_at < now() - make_interval(mins => :mins)
+      AND reclaim_count < :max_reclaims
+    RETURNING id, user_id
+""")
+
+_STALE_DRAFTING_OVER_CAP_SQL = text("""
+    SELECT id FROM outreach
+    WHERE status = :drafting
+      AND updated_at < now() - make_interval(mins => :mins)
+      AND reclaim_count >= :max_reclaims
+""")
+
+_RECLAIMED_ERROR_MSG = (
+    f"Drafting claim stale for over {RECOVERY_STALE_MINUTES} minutes (worker likely "
+    "crashed mid-draft); returned to queued for retry."
+)
+
+_RECLAIM_CAP_EXCEEDED_MSG = (
+    f"Drafting claim reclaimed {MAX_DRAFTING_RECLAIMS} time(s) without completing "
+    "(worker keeps crashing on this row); giving up and dead-lettering."
+)
+
+
 @shared_task(name="cold_email.workers.drafting.drafting_recovery_task")
 def drafting_recovery_task() -> dict:
-    """Re-dispatch drafting for users with stale queued rows.
+    """Re-dispatch drafting for users with stale queued rows, and reclaim rows
+    stuck at 'drafting'.
 
-    A safety net, not the primary path: without it, a Redis hiccup during
-    POST /api/outreach leaves rows 'queued' forever with no explanation the
-    user can see or act on. Reads `outreach` directly (not the pending_drafts
-    view, which has no notion of "how long queued") so the staleness cutoff
-    can be expressed directly in the query.
+    A safety net, not the primary path. Two distinct things can strand a row,
+    and this sweep recovers from both:
+
+      * A Redis hiccup during POST /api/outreach leaves rows 'queued' forever
+        with no explanation the user can see or act on — the original reason
+        this task exists.
+      * A hard Celery process crash (SIGKILL, OOM, container eviction) between
+        claim_pending_drafts moving a row to 'drafting' and the row finishing
+        leaves it claimed forever — not a Python exception, so drafting_task's
+        own per-row `except Exception` never runs to release it. Below
+        MAX_DRAFTING_RECLAIMS, the row is returned to 'queued' so the normal
+        path retries it (safe: the claim's compare-and-swap still prevents a
+        second concurrent draft, and no Gmail draft exists yet). Past the cap,
+        it's dead-lettered via fail_outreach instead of requeued forever —
+        the same failure choke point as any other terminal drafting error, so
+        a row that keeps crashing its worker becomes visible in the DLQ
+        rather than looping silently.
+
+    Reads `outreach` directly (not the pending_drafts view, which has no
+    notion of "how long queued"/"how long claimed") so the staleness cutoff
+    can be expressed directly in the query. The 'drafting' cutoff relies on
+    claim_pending_drafts setting updated_at = now() explicitly at claim time —
+    a raw text() UPDATE bypasses the ORM, so Outreach.updated_at's
+    onupdate=func.now() would otherwise never fire and every claimed row
+    would look infinitely stale (or never stale, depending on when it was
+    created).
     """
     with get_sync_session() as session:
-        user_ids = (
-            session.execute(
+        user_ids = {
+            str(user_id)
+            for user_id in session.execute(
                 text("""
                     SELECT DISTINCT user_id FROM outreach
                     WHERE status = 'queued'
@@ -270,6 +341,51 @@ def drafting_recovery_task() -> dict:
             )
             .scalars()
             .all()
+        }
+
+        reclaimed = (
+            session.execute(
+                _RECLAIM_STALE_DRAFTING_SQL,
+                {
+                    "queued": OUTREACH_QUEUED,
+                    "drafting": OUTREACH_DRAFTING,
+                    "mins": RECOVERY_STALE_MINUTES,
+                    "max_reclaims": MAX_DRAFTING_RECLAIMS,
+                    "error_msg": _RECLAIMED_ERROR_MSG,
+                },
+            )
+            .mappings()
+            .all()
+        )
+        # Fold reclaimed rows' owners into the same dispatch set: they're
+        # already 'queued' as of this transaction, so there's no reason to
+        # make them wait for next hour's stale-queued query to notice.
+        user_ids.update(str(row["user_id"]) for row in reclaimed)
+
+        over_cap_ids = (
+            session.execute(
+                _STALE_DRAFTING_OVER_CAP_SQL,
+                {
+                    "drafting": OUTREACH_DRAFTING,
+                    "mins": RECOVERY_STALE_MINUTES,
+                    "max_reclaims": MAX_DRAFTING_RECLAIMS,
+                },
+            )
+            .scalars()
+            .all()
+        )
+        session.commit()
+
+    # Outside the session above, same choke point every other terminal
+    # drafting failure uses: dead-letters the row AND marks it 'failed', so it
+    # stops matching the query above on the next run (self-cleaning) and shows
+    # up in the DLQ for a human to inspect.
+    for outreach_id in over_cap_ids:
+        fail_outreach(
+            str(outreach_id),
+            _RECLAIM_CAP_EXCEEDED_MSG,
+            stage=DRAFTING,
+            task_name="cold_email.workers.drafting.drafting_recovery_task",
         )
 
     # Wrapped per-user: this is the sweep that exists specifically to recover
@@ -285,4 +401,16 @@ def drafting_recovery_task() -> dict:
 
     if swept:
         logger.info(f"Recovery sweep re-dispatched drafting for {swept} user(s)")
-    return {"status": "success", "users_swept": swept}
+    if reclaimed:
+        logger.warning(f"Recovery sweep reclaimed {len(reclaimed)} stale 'drafting' row(s)")
+    if over_cap_ids:
+        logger.warning(
+            f"Recovery sweep dead-lettered {len(over_cap_ids)} row(s) stuck at "
+            "'drafting' past the reclaim cap"
+        )
+    return {
+        "status": "success",
+        "users_swept": swept,
+        "reclaimed": len(reclaimed),
+        "dead_lettered": len(over_cap_ids),
+    }

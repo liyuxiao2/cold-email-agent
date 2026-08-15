@@ -12,11 +12,11 @@ file is independent and idempotent). Two distinct gaps land here:
     (migrations/storage.sql).
   * ALTER TABLE on an existing table (R43): create_all only ever issues
     CREATE TABLE — it never alters a table that already exists. A migration
-    that adds columns to `users` (008_user_llm_and_quota.sql) is therefore
-    invisible to create_all on any database that already has a `users` table,
-    which in production is every deploy after the first. Written entirely as
-    `ADD COLUMN IF NOT EXISTS`, so it's as safe to run on every boot as the
-    storage DDL.
+    that adds columns to `users` (008_user_llm_and_quota.sql) or `outreach`
+    (009_outreach_reclaim_count.sql) is therefore invisible to create_all on
+    any database that already has that table, which in production is every
+    deploy after the first. Written entirely as `ADD COLUMN IF NOT EXISTS`, so
+    it's as safe to run on every boot as the storage DDL.
 
 SQL_FILES is a list, not a single path, so a later stack that hits either
 class of gap (another column needing a non-default storage strategy, a
@@ -44,6 +44,7 @@ MIGRATIONS_DIR = Path(__file__).resolve().parent.parent / "migrations"
 SQL_FILES = (
     MIGRATIONS_DIR / "storage.sql",
     MIGRATIONS_DIR / "008_user_llm_and_quota.sql",
+    MIGRATIONS_DIR / "009_outreach_reclaim_count.sql",
 )
 
 
