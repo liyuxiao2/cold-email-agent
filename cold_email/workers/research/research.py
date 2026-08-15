@@ -26,11 +26,7 @@ from cold_email.workers.research.helpers.extraction import (
     scrape_website,
 )
 from cold_email.workers.research.helpers.preflight import resolve_company_url
-from cold_email.workers.shared.constants import (
-    DEFAULT_MAX_RETRIES,
-    DEFAULT_RETRY_DELAY,
-    LLM_RATE_LIMIT,
-)
+from cold_email.workers.shared.constants import DEFAULT_MAX_RETRIES, DEFAULT_RETRY_DELAY
 from cold_email.workers.shared.db_helpers import update_company_research_status
 from cold_email.workers.shared.errors import fail_company
 
@@ -42,9 +38,10 @@ logger = logging.getLogger(__name__)
     autoretry_for=(Exception,),
     max_retries=DEFAULT_MAX_RETRIES,
     default_retry_delay=DEFAULT_RETRY_DELAY,
-    # Pace per-company LLM calls under the free-tier 5 req/min cap so a burst
-    # of requeued companies doesn't 429 itself into repeated retries.
-    rate_limit=LLM_RATE_LIMIT,
+    # Per-company LLM pacing now comes from the fleet-wide Redis token bucket
+    # inside generate_json (see cold_email.workers.shared.rate_limit), not a
+    # Celery rate_limit=: that argument is enforced per-worker, so it has the
+    # same defect as the time.sleep it used to sit alongside.
     name="cold_email.workers.research.research_task",
 )
 def research_task(self, company_id: str) -> dict:

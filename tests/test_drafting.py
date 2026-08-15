@@ -86,7 +86,6 @@ def test_drafting_sweep_happy_path():
         ) as mock_create,
         patch("cold_email.workers.drafting.drafting.commit_draft") as mock_commit,
         patch("cold_email.workers.drafting.drafting.update_outreach_status") as mock_status,
-        patch("cold_email.workers.drafting.drafting.time.sleep"),
     ):
         result = drafting_task()
 
@@ -150,7 +149,6 @@ def test_drafting_marks_empty_draft_failed():
         patch("cold_email.workers.drafting.drafting.draft_email", return_value={}),
         patch("cold_email.workers.drafting.drafting.create_draft") as mock_create,
         patch("cold_email.workers.drafting.drafting.fail_outreach") as mock_fail,
-        patch("cold_email.workers.drafting.drafting.time.sleep"),
     ):
         result = drafting_task()
 
@@ -186,7 +184,6 @@ def test_drafting_one_bad_outreach_does_not_abort_sweep():
         ),
         patch("cold_email.workers.drafting.drafting.commit_draft"),
         patch("cold_email.workers.drafting.drafting.update_outreach_status") as mock_status,
-        patch("cold_email.workers.drafting.drafting.time.sleep"),
     ):
         result = drafting_task()
 
@@ -365,7 +362,6 @@ async def test_empty_model_output_fails_only_that_outreach_row(
             {} if row.contact_email == "bad@globex.com" else {"subject": "Hi", "body": "Body"}
         ),
     )
-    monkeypatch.setattr("cold_email.workers.drafting.drafting.time.sleep", lambda *_: None)
     monkeypatch.setattr(
         "cold_email.workers.drafting.drafting.create_draft", lambda creds, **kwargs: "gmail-1"
     )
@@ -441,7 +437,6 @@ async def test_profile_without_a_pdf_drafts_with_no_attachment(
         "cold_email.workers.drafting.drafting.draft_email",
         lambda row, profile: {"subject": "Hi", "body": "Body", "body_html": "<p>Body</p>"},
     )
-    monkeypatch.setattr("cold_email.workers.drafting.drafting.time.sleep", lambda *_: None)
 
     drafting_task()
     assert captured_drafts[0]["attachment"] is None
@@ -473,7 +468,6 @@ async def test_resume_is_read_once_per_sweep_not_per_lead(
         "draft_email",
         lambda row, profile: {"subject": "Hi", "body": "Body", "body_html": "<p>Body</p>"},
     )
-    monkeypatch.setattr(drafting_module.time, "sleep", lambda *_: None)
     monkeypatch.setattr(drafting_module, "create_draft", lambda creds, **kwargs: "gmail-fake")
 
     drafting_module.drafting_task()
@@ -542,7 +536,6 @@ async def test_drafting_pairs_each_users_own_credentials_and_resume(
             "body_html": "<p>Body</p>",
         },
     )
-    monkeypatch.setattr("cold_email.workers.drafting.drafting.time.sleep", lambda *_: None)
 
     from cold_email.workers.drafting.drafting import drafting_task
 
@@ -618,7 +611,6 @@ async def test_one_users_missing_profile_does_not_block_another_users_draft(
         "cold_email.workers.drafting.drafting.draft_email",
         lambda row, profile: {"subject": "Hi", "body": "Body", "body_html": "<p>Body</p>"},
     )
-    monkeypatch.setattr("cold_email.workers.drafting.drafting.time.sleep", lambda *_: None)
     monkeypatch.setattr(
         "cold_email.workers.drafting.drafting.create_draft", lambda creds, **kwargs: "gmail-fake"
     )

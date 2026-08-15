@@ -12,7 +12,6 @@ Shared failure handling lives in cold_email.workers.shared.errors.
 """
 
 import logging
-import time
 from dataclasses import dataclass
 
 from celery import shared_task
@@ -37,11 +36,7 @@ from cold_email.workers.drafting.helpers.db_helpers import (
     fetch_pending_user_ids,
 )
 from cold_email.workers.drafting.helpers.generation import draft_email
-from cold_email.workers.shared.constants import (
-    DEFAULT_MAX_RETRIES,
-    DEFAULT_RETRY_DELAY,
-    LLM_MIN_INTERVAL_SECONDS,
-)
+from cold_email.workers.shared.constants import DEFAULT_MAX_RETRIES, DEFAULT_RETRY_DELAY
 from cold_email.workers.shared.db_helpers import update_outreach_status
 from cold_email.workers.shared.errors import fail_outreach, handle_transient_failure
 from cold_email.workers.shared.gmail_client import GmailCredentials, create_draft
@@ -238,7 +233,6 @@ def drafting_task(self) -> dict:
 
             try:
                 draft = draft_email(row, context.profile)
-                time.sleep(LLM_MIN_INTERVAL_SECONDS)
 
                 if not draft.get("subject") or not draft.get("body"):
                     fail_outreach(

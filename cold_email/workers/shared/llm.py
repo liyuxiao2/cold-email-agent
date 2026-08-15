@@ -1,4 +1,5 @@
 import logging
+from dataclasses import dataclass
 from typing import Protocol
 
 import groq
@@ -7,9 +8,38 @@ from google.genai import errors as genai_errors
 from groq import Groq
 from pydantic import BaseModel
 
+from cold_email.auth.crypto import decrypt
 from cold_email.config import settings
+from cold_email.workers.shared.constants import BUCKET_WAIT_SECONDS
+from cold_email.workers.shared.rate_limit import acquire
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class LlmCredentials:
+    """Which key a call uses, and whether platform limits apply.
+
+    Three paths, one resolver:
+      * platform key -> shared token bucket + per-user quota
+      * user's own key (BYOK) -> their limits, so both are bypassed
+      * self-hosted -> env keys, bucket harmlessly enforced
+    """
+
+    api_key: str | None
+    provider: str | None
+    is_byok: bool
+
+
+def resolve_llm_credentials(user) -> LlmCredentials:
+    """Pick the credentials for a user's LLM calls."""
+    if user is not None and user.llm_api_key_enc:
+        return LlmCredentials(
+            api_key=decrypt(user.llm_api_key_enc),
+            provider=user.llm_provider,
+            is_byok=True,
+        )
+    return LlmCredentials(api_key=None, provider=None, is_byok=False)
 
 
 def _field_guide(schema: type[BaseModel]) -> str:
@@ -25,14 +55,22 @@ def _field_guide(schema: type[BaseModel]) -> str:
 
 
 class LLMProvider(Protocol):
-    def generate(self, *, model: str, system: str, prompt: str, schema: type[BaseModel]) -> str: ...
+    def generate(
+        self,
+        *,
+        model: str,
+        system: str,
+        prompt: str,
+        schema: type[BaseModel],
+        api_key: str | None = None,
+    ) -> str: ...
 
     def should_fall_back(self, exc: Exception) -> bool: ...
 
 
 class GeminiProvider:
-    def generate(self, *, model, system, prompt, schema) -> str:
-        client = genai.Client(api_key=settings.gemini_api_key)
+    def generate(self, *, model, system, prompt, schema, api_key: str | None = None) -> str:
+        client = genai.Client(api_key=api_key or settings.gemini_api_key)
         response = client.models.generate_content(
             model=model,
             contents=prompt,
@@ -55,8 +93,8 @@ class GeminiProvider:
 
 
 class GroqProvider:
-    def generate(self, *, model, system, prompt, schema) -> str:
-        client = Groq(api_key=settings.groq_api_key)
+    def generate(self, *, model, system, prompt, schema, api_key: str | None = None) -> str:
+        client = Groq(api_key=api_key or settings.groq_api_key)
         response = client.chat.completions.create(
             model=model,
             messages=[
@@ -97,14 +135,40 @@ def _provider_for(model: str) -> LLMProvider:
     raise ValueError(f"Unknown model: {model}")
 
 
-def generate_json(*, system: str, prompt: str, schema: type[BaseModel]) -> str:
+def generate_json(
+    *,
+    system: str,
+    prompt: str,
+    schema: type[BaseModel],
+    credentials: LlmCredentials | None = None,
+) -> str:
+    """Generate structured JSON, walking the model fallback chain.
+
+    `credentials` gates the shared token bucket: BYOK callers bypass it
+    entirely (their key, their limits — the bucket models OUR platform quota,
+    not theirs). A bucket timeout is treated exactly like a 429: it skips to
+    the next model in the chain, reusing the existing skip logic rather than
+    growing a second, parallel notion of "this model is unavailable".
+    """
+    credentials = credentials or LlmCredentials(api_key=None, provider=None, is_byok=False)
     chain = settings.model_fallback_chain or [settings.model_name]
     last_exc: Exception | None = None
 
     for model in chain:
+        if not credentials.is_byok and not acquire(f"llm:{model}", timeout=BUCKET_WAIT_SECONDS):
+            logger.info(f"Token bucket exhausted for {model}; skipping to the next model")
+            last_exc = RuntimeError(f"rate limit timeout for {model}")
+            continue
+
         provider = _provider_for(model)
         try:
-            return provider.generate(model=model, system=system, prompt=prompt, schema=schema)
+            return provider.generate(
+                model=model,
+                system=system,
+                prompt=prompt,
+                schema=schema,
+                api_key=credentials.api_key,
+            )
         except Exception as exc:
             if not provider.should_fall_back(exc):
                 raise
