@@ -47,13 +47,44 @@ HTTP_STATUS_OK = 200
 # Slug used to match a company name against a candidate domain.
 SLUG_CLEANUP_REGEX = r"[^a-z0-9]"
 
-HUNTER_EMAIL_FINDER_URL = "https://api.hunter.io/v2/email-finder"
+HUNTER_DOMAIN_SEARCH_URL = "https://api.hunter.io/v2/domain-search"
 HUNTER_TIMEOUT_SECONDS = 15
-# Minimum Hunter confidence (0-100) to accept an email; below this we treat the
-# lead as having no reliable address and fail it fast into the DLQ.
+# Max contacts to request per domain. Hunter pages results; a startup rarely has
+# more than a handful of decision-makers, so a small page keeps credits down.
+HUNTER_DOMAIN_SEARCH_LIMIT = 25
+
+# Minimum Hunter confidence (0-100) for a contact to be usable. Unchanged
+# threshold, but it is now a PER-CONTACT filter rather than a lead-level gate.
 MIN_EMAIL_SCORE = 25
 
-# Terminal failure reason when research can't resolve a usable founder email.
-ERR_NO_EMAIL_FOUND = "No founder email found (Hunter)"
+# Positions worth cold-emailing as a candidate. The email template is
+# founder-flavored ("I admire what you're building"), so restricting recipients
+# to decision-makers and hiring roles keeps it honest with no prompt changes.
+# Matched case-insensitively as substrings against Hunter's `position`.
+DECISION_MAKER_PATTERNS = (
+    "founder",
+    "co-founder",
+    "cofounder",
+    "ceo",
+    "cto",
+    "coo",
+    "chief technology",
+    "chief executive",
+    "vp engineering",
+    "vp of engineering",
+    "head of engineering",
+    "director of engineering",
+    "engineering manager",
+    "eng lead",
+    "technical lead",
+    "recruit",
+    "talent",
+    "people ops",
+    "head of people",
+    "hiring",
+)
+
+# Terminal failure reason when research finds nobody worth emailing.
+ERR_NO_ELIGIBLE_CONTACTS = "No eligible contacts found (Hunter)"
 
 RESEARCH = "research"
