@@ -398,6 +398,48 @@ async def test_recovery_sweep_only_picks_up_stale_rows(
 
 
 @pytest.mark.asyncio
+async def test_recovery_sweep_survives_one_users_dispatch_failure(
+    async_session, sync_session_for, monkeypatch
+):
+    """A Redis hiccup on ONE user's re-dispatch — the exact scenario this
+    sweep exists to recover from — must not abort the loop and skip every
+    remaining stale user for the hour."""
+    from datetime import UTC, datetime, timedelta
+
+    from cold_email.database import ROLE_USER, User
+
+    user_a = User(email="stale-a@example.com", google_sub="sub-stale-a", role=ROLE_USER)
+    user_b = User(email="stale-b@example.com", google_sub="sub-stale-b", role=ROLE_USER)
+    async_session.add_all([user_a, user_b])
+    await async_session.commit()
+
+    outreach_a = await _add_queued_outreach(async_session, user_a.id, "AcmeCo", "a@acme.com")
+    outreach_b = await _add_queued_outreach(async_session, user_b.id, "GlobexCo", "b@globex.com")
+    stale_at = datetime.now(UTC) - timedelta(minutes=45)
+    outreach_a.created_at = stale_at
+    outreach_b.created_at = stale_at
+    await async_session.commit()
+
+    dispatched = []
+
+    def fake_delay(user_id):
+        dispatched.append(user_id)
+        if user_id == str(user_a.id):
+            raise ConnectionError("redis is down")
+
+    monkeypatch.setattr("cold_email.workers.drafting.drafting.drafting_task.delay", fake_delay)
+
+    from cold_email.workers.drafting.drafting import drafting_recovery_task
+
+    result = drafting_recovery_task()
+
+    # Both dispatches were attempted despite the first raising.
+    assert set(dispatched) == {str(user_a.id), str(user_b.id)}
+    # Only the successful one counts toward the reported total.
+    assert result["users_swept"] == 1
+
+
+@pytest.mark.asyncio
 async def test_byok_users_credentials_reach_the_llm(
     async_session,
     sync_session_for,

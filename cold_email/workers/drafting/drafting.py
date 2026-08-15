@@ -219,9 +219,17 @@ def drafting_recovery_task() -> dict:
             .all()
         )
 
+    # Wrapped per-user: this is the sweep that exists specifically to recover
+    # from a broker hiccup, so a Redis blip on THIS dispatch must not itself
+    # abort the loop and skip every remaining user for the hour.
+    swept = 0
     for user_id in user_ids:
-        drafting_task.delay(str(user_id))
+        try:
+            drafting_task.delay(str(user_id))
+            swept += 1
+        except Exception as exc:
+            logger.warning(f"Could not re-dispatch drafting_task for user {user_id}: {exc}")
 
-    if user_ids:
-        logger.info(f"Recovery sweep re-dispatched drafting for {len(user_ids)} users")
-    return {"status": "success", "users_swept": len(user_ids)}
+    if swept:
+        logger.info(f"Recovery sweep re-dispatched drafting for {swept} user(s)")
+    return {"status": "success", "users_swept": swept}
