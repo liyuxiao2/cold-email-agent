@@ -16,13 +16,12 @@ EMAIL_DRAFT_SYSTEM = (
     "engineer sends to a startup founder. You do NOT write the whole email — only "
     "the fields requested.\n\n"
     "Rules:\n"
-    "- `company_interest`: complete the sentence 'I'm particularly interested in ...' "
-    "with a specific aspect of what THIS company builds (e.g. 'how Turo handles "
-    "car-sharing marketplace technology'). Use only the provided research; never "
-    "invent products or facts.\n"
-    "- `admiration_detail`: complete 'I'm drawn to ...' with a concrete, non-generic "
-    "detail (a technical bet, culture, or recent milestone). No flattery that could "
-    "apply to any company.\n"
+    "- `why_company`: write a brief, natural 2-3 sentence paragraph explaining why you are reaching out to "
+    "this specific company. Avoid repetitive or formulaic phrasing (do NOT use 'I'm particularly interested in' "
+    "and 'I'm drawn to' together, as it sounds robotic). Instead, make it flow naturally. You can congratulate them "
+    "on recent news/funding, reference a specific project or tech stack, or explain why their mission/problem is "
+    "compelling to you, and close the paragraph with a transition to seeing if there might be a fit to contribute "
+    "to the team.\n"
     "- `intro`: write a tailored first-person introduction sentence (e.g., 'My name is Liyu, a CS student at McMaster...') "
     "that highlights relevant aspects of your background (from the resume) that align with "
     "the company's domain, tech stack, or challenges. Keep it to exactly one sentence, professional, "
@@ -41,8 +40,9 @@ class EmailDraftContext(BaseModel):
     """Contextual slots the LLM fills; the template supplies everything else."""
 
     subject: str = Field(description="Short, company-specific subject line")
-    company_interest: str = Field(description="Completes 'I'm particularly interested in ...'")
-    admiration_detail: str = Field(description="Completes 'I'm drawn to ...'")
+    why_company: str = Field(
+        description="A 2-3 sentence paragraph detailing why you are interested in the company (referencing their tech, projects, news, or mission) and wanting to explore a fit to contribute."
+    )
     intro: str = Field(
         description="A tailored, professional first-person introduction sentence based on the resume and company context"
     )

@@ -32,8 +32,7 @@ def _row(founder_name="Kenny Chan"):
 def _context():
     return {
         "subject": "Interested in Turo",
-        "company_interest": "how Turo handles car-sharing marketplace technology",
-        "admiration_detail": "the high-ownership culture you've built",
+        "why_company": "I've been following how Turo handles marketplace technology and would love to contribute.",
         "intro": "My name is Liyu, a CS student at McMaster.",
         "tailored_bullets": [
             "Wealthsimple: led an RESP engine for 3M+ clients",
@@ -48,7 +47,7 @@ def test_assemble_produces_subject_body_and_html():
     # Greeting uses recipient's FIRST name only.
     assert draft["body"].startswith("Hi Kenny,")
     # Contextual slot woven in; no leftover template tokens.
-    assert "how Turo handles car-sharing marketplace technology" in draft["body"]
+    assert "I've been following how Turo handles marketplace technology" in draft["body"]
     assert "{{" not in draft["body"]
     # Tailored bullets rendered with bold labels and embedded links.
     assert "Wealthsimple (https://wealthsimple.com)" in draft["body"]
@@ -68,5 +67,6 @@ def test_assemble_produces_subject_body_and_html():
 
 def test_assemble_returns_empty_when_context_incomplete():
     ctx = _context()
-    del ctx["company_interest"]
+    del ctx["why_company"]
     assert assemble_email(ctx, _row(), PROFILE) == {}
+
