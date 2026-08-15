@@ -134,6 +134,42 @@ def test_drafting_marks_empty_draft_failed():
     assert mock_fail.call_args.args[0] == OUTREACH_A
 
 
+def test_llm_auth_failure_is_terminal_not_transient():
+    """A rejected BYOK key must fail_outreach (terminal, DLQ'd, visible to the
+    user), never handle_transient_failure — retrying the same key on the next
+    recovery sweep can't ever succeed, so looping it would retry forever with
+    nothing the user could act on."""
+    from cold_email.workers.shared.llm import LlmAuthenticationError
+
+    with (
+        patch(
+            "cold_email.workers.drafting.drafting.fetch_pending_drafts",
+            return_value=[_pending_row(OUTREACH_A)],
+        ),
+        patch(
+            "cold_email.workers.drafting.drafting.load_sender_context",
+            return_value=(_FAKE_CONTEXT, "ok"),
+        ),
+        patch(
+            "cold_email.workers.drafting.drafting.draft_email",
+            side_effect=LlmAuthenticationError("bad key"),
+        ),
+        patch(
+            "cold_email.workers.drafting.drafting.claim_pending_drafts",
+            side_effect=lambda ids: set(ids),
+        ),
+        patch("cold_email.workers.drafting.drafting.fail_outreach") as mock_fail,
+        patch("cold_email.workers.drafting.drafting.handle_transient_failure") as mock_transient,
+    ):
+        result = drafting_task(USER_1)
+
+    assert result == {"status": "success", "drafted": 0}
+    mock_transient.assert_not_called()
+    mock_fail.assert_called_once()
+    assert mock_fail.call_args.args[0] == OUTREACH_A
+    assert "bad key" in mock_fail.call_args.args[1]
+
+
 def test_drafting_one_bad_outreach_does_not_abort_sweep():
     """A transient failure on one row leaves it for the next sweep; others still draft."""
     with (

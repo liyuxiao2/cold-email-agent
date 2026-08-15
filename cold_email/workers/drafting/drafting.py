@@ -49,7 +49,11 @@ from cold_email.workers.shared.constants import DEFAULT_MAX_RETRIES, DEFAULT_RET
 from cold_email.workers.shared.db_helpers import update_outreach_status
 from cold_email.workers.shared.errors import fail_outreach, handle_transient_failure
 from cold_email.workers.shared.gmail_client import GmailCredentials, create_draft
-from cold_email.workers.shared.llm import LlmCredentials, resolve_llm_credentials
+from cold_email.workers.shared.llm import (
+    LlmAuthenticationError,
+    LlmCredentials,
+    resolve_llm_credentials,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -125,12 +129,16 @@ def drafting_task(self, user_id: str) -> dict:
     the next dispatch (a manual regenerate, or the recovery sweep) pick them
     up with no manual DLQ retry.
 
-    Once past preflight, two failure classes are handled differently per row
-    so one bad row never aborts the rest of the batch:
-      * Terminal (empty model output) → fail_outreach marks the row 'failed'.
-        It drops out of pending_drafts and is not retried automatically.
+    Once past preflight, three failure classes are handled differently per
+    row so one bad row never aborts the rest of the batch:
+      * Terminal, empty output → fail_outreach marks the row 'failed'. It
+        drops out of pending_drafts and is not retried automatically.
         (contact_email is never missing here: pending_drafts INNER JOINs
         company_contacts on a NOT NULL email.)
+      * Terminal, LLM auth failure (LlmAuthenticationError, e.g. a rejected
+        BYOK key) → also fail_outreach: a wrong key will never succeed on
+        retry, so treating it as transient would retry it every recovery
+        sweep forever with nothing the user could see or act on.
       * Transient (LLM/Gmail network hiccup) → handle_transient_failure logs
         and records the reason, and the row is explicitly requeued to
         'queued' (releasing this sweep's claim — see claim_pending_drafts)
@@ -213,6 +221,20 @@ def drafting_task(self, user_id: str) -> dict:
             )
             update_outreach_status(outreach_id, OUTREACH_DRAFTED)
             drafted += 1
+
+        except LlmAuthenticationError as exc:
+            # Terminal, not transient: a rejected BYOK key will never succeed
+            # on retry, so looping it through handle_transient_failure would
+            # retry it every recovery sweep forever with nothing the user
+            # could act on. fail_outreach both marks the row 'failed' (out of
+            # 'drafting', so it's never mistaken for a lost claim) and writes
+            # a DLQ row the user can see and retry once the key is fixed.
+            fail_outreach(
+                outreach_id,
+                f"LLM authentication failed: {exc}",
+                stage=DRAFTING,
+                task_name="cold_email.workers.drafting.drafting_task",
+            )
 
         except Exception as exc:
             handle_transient_failure(outreach_id, exc)
