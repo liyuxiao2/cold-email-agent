@@ -1,6 +1,7 @@
 import pytest
 
-from cold_email.auth.crypto import decrypt, encrypt
+from cold_email.auth.crypto import EncryptionKeyMissing, _cipher, decrypt, encrypt
+from cold_email.config import settings
 
 
 def test_round_trip():
@@ -32,3 +33,27 @@ def test_decrypt_rejects_tampered_ciphertext():
     token[-1] ^= 0xFF
     with pytest.raises(InvalidToken):
         decrypt(bytes(token))
+
+
+def test_missing_encryption_key_raises(monkeypatch):
+    """`_cipher` is `@lru_cache(maxsize=1)`, so a naive test would pass by
+    cache-warming rather than exercising the guard — the cache must be
+    cleared before AND after so this test actually calls the guard and later
+    tests are unaffected."""
+    _cipher.cache_clear()
+    monkeypatch.setattr(settings, "encryption_key", "")
+    try:
+        with pytest.raises(EncryptionKeyMissing):
+            encrypt("x")
+    finally:
+        _cipher.cache_clear()
+
+
+def test_malformed_encryption_key_raises(monkeypatch):
+    _cipher.cache_clear()
+    monkeypatch.setattr(settings, "encryption_key", "not-a-valid-fernet-key")
+    try:
+        with pytest.raises(EncryptionKeyMissing):
+            encrypt("x")
+    finally:
+        _cipher.cache_clear()
