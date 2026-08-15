@@ -124,7 +124,7 @@ export default function ReviewDeck({
                 gap: '1.5rem',
               }}
             >
-              {/* Lead Info & Research Column */}
+              {/* Company Info & Research Column */}
               <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
                 <div>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -384,7 +384,7 @@ export default function ReviewDeck({
               maxWidth: '440px',
             }}
           >
-            <h3 style={{ fontSize: '1.15rem', fontWeight: 700 }}>Reject Lead Draft</h3>
+            <h3 style={{ fontSize: '1.15rem', fontWeight: 700 }}>Reject Outreach Draft</h3>
             <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginTop: '0.35rem' }}>
               Add an optional reason or feedback for rejection:
             </p>
