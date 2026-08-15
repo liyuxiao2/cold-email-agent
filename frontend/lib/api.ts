@@ -67,6 +67,24 @@ export interface TaskAck {
   task_id?: string;
 }
 
+export type SenderProfile = {
+  name: string;
+  intro: string;
+  linkedin: string | null;
+  github: string | null;
+  website: string | null;
+  experience_pool: string[];
+  company_links: Record<string, string>;
+  has_resume: boolean;
+  resume_filename: string | null;
+};
+
+export interface ResumeUploadResult {
+  stored: boolean;
+  /** A SUGGESTED profile only — nothing is saved until PUT /api/profile. */
+  suggested: Partial<SenderProfile>;
+}
+
 export interface OutreachPage {
   items: OutreachItem[];
   total: number;
@@ -172,4 +190,58 @@ export function triggerDiscovery(): Promise<TaskAck> {
 
 export function triggerDrafting(): Promise<TaskAck> {
   return request<TaskAck>('/api/pipeline/drafting', { method: 'POST' });
+}
+
+export function getProfile(): Promise<SenderProfile> {
+  return request<SenderProfile>('/api/profile');
+}
+
+export function saveProfile(profile: Partial<SenderProfile>): Promise<SenderProfile> {
+  return request<SenderProfile>('/api/profile', { method: 'PUT', body: JSON.stringify(profile) });
+}
+
+/**
+ * Uploads a résumé PDF and returns a SUGGESTED profile for the user to review
+ * before saving — it never writes to the profile itself.
+ *
+ * Deliberately bypasses `request()`: that helper sets `Content-Type:
+ * application/json` on every non-GET call, which would stomp the
+ * `multipart/form-data; boundary=...` header the browser needs to set itself
+ * from the FormData body. A hand-set multipart Content-Type (missing the
+ * boundary) makes the server unable to parse the body at all.
+ */
+export async function uploadResume(file: File): Promise<ResumeUploadResult> {
+  const form = new FormData();
+  form.append('file', file);
+  const response = await fetch(`${getApiBaseUrl()}/api/profile/resume`, {
+    method: 'POST',
+    credentials: 'include', // required: cookies are not sent cross-origin by default
+    body: form,
+  });
+  if (response.status === 401 && typeof window !== 'undefined') {
+    window.location.href = '/login';
+    throw new Error('Not authenticated');
+  }
+  if (!response.ok) {
+    const detail = await response.json().catch(() => null);
+    throw new Error(detail?.detail ?? `${response.status} upload failed`);
+  }
+  return response.json() as Promise<ResumeUploadResult>;
+}
+
+export function deleteResume(): Promise<TaskAck> {
+  return request<TaskAck>('/api/profile/resume', { method: 'DELETE' });
+}
+
+/** Kicks off the same Google OAuth consent flow used at sign-in. Google only
+ * returns a refresh token on a consent screen, so re-running this — not some
+ * separate "reconnect" endpoint — is how a user with a lapsed/missing Gmail
+ * token gets one again. */
+export async function startGoogleLogin(): Promise<void> {
+  const response = await fetch(`${getApiBaseUrl()}/api/auth/google/login`, {
+    credentials: 'include',
+  });
+  if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+  const { authorize_url } = (await response.json()) as { authorize_url: string };
+  window.location.href = authorize_url;
 }
