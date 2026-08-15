@@ -29,7 +29,7 @@ from cold_email.auth.session import (
 )
 from cold_email.auth.signup_policy import is_signup_allowed
 from cold_email.config import settings
-from cold_email.database import User, get_async_session
+from cold_email.database import Profile, User, get_async_session
 
 logger = logging.getLogger(__name__)
 
@@ -134,8 +134,12 @@ async def google_callback(
 
 
 @router.get("/me")
-async def me(user: User = Depends(get_current_user)):
+async def me(
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_async_session),
+):
     """The caller's identity and connection state."""
+    profile = await session.get(Profile, user.id)
     return {
         "id": str(user.id),
         "email": user.email,
@@ -143,6 +147,9 @@ async def me(user: User = Depends(get_current_user)):
         "picture_url": user.picture_url,
         "role": user.role,
         "gmail_connected": user.gmail_refresh_token_enc is not None,
+        # Drives the frontend's onboarding gate. Returned here so a new user
+        # needs ONE request, not two, to decide where to land.
+        "profile_complete": profile is not None and bool(profile.name and profile.intro),
     }
 
 
