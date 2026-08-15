@@ -4,6 +4,7 @@ import pathlib
 import pytest
 
 from cold_email.profile_extract import (
+    MAX_EXTRACTED_CHARS,
     MIN_EXTRACTED_CHARS,
     ResumeUnreadable,
     extract_text,
@@ -29,6 +30,26 @@ def test_image_only_pdf_raises_unreadable():
     a confidently fabricated profile, which is far worse than an error."""
     with pytest.raises(ResumeUnreadable, match="couldn't read text"):
         extract_text((FIXTURES / "image_only.pdf").read_bytes())
+
+
+def test_extract_text_truncates_oversized_output(monkeypatch):
+    """A dense text PDF can yield millions of characters. Since resume_text is
+    committed before the LLM ever sees it, an unbounded value would land in
+    every future drafting prompt forever (see profile_extract.MAX_EXTRACTED_CHARS)."""
+    huge_text = "x" * (MAX_EXTRACTED_CHARS + 5_000)
+
+    class FakePage:
+        def extract_text(self):
+            return huge_text
+
+    class FakeReader:
+        def __init__(self, _stream):
+            self.pages = [FakePage()]
+
+    monkeypatch.setattr("cold_email.profile_extract.PdfReader", FakeReader)
+
+    result = extract_text(b"%PDF-1.7 fake")
+    assert len(result) == MAX_EXTRACTED_CHARS
 
 
 def test_suggest_profile_maps_the_llm_payload(monkeypatch):
