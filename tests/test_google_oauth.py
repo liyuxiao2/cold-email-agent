@@ -16,15 +16,17 @@ from cold_email.auth.google_oauth import (
 FAKE_ID_TOKEN_CLAIMS = {
     "sub": "1234567890",
     "email": "person@example.com",
+    "email_verified": True,
     "name": "A Person",
     "picture": "https://example.com/p.jpg",
 }
 
 
-def _id_token() -> str:
+def _id_token(**claim_overrides) -> str:
     import jwt
 
-    return jwt.encode(FAKE_ID_TOKEN_CLAIMS, "irrelevant", algorithm="HS256")
+    claims = {**FAKE_ID_TOKEN_CLAIMS, **claim_overrides}
+    return jwt.encode(claims, "irrelevant", algorithm="HS256")
 
 
 def test_authorize_url_requests_offline_access_and_forces_consent():
@@ -92,3 +94,33 @@ def test_exchange_code_raises_on_google_error(monkeypatch):
     )
     with pytest.raises(OAuthExchangeFailed):
         exchange_code("stale-code")
+
+
+def test_exchange_code_rejects_unverified_email(monkeypatch):
+    """The canonical Sign-in-with-Google pitfall: an id_token can carry an
+    unverified email, and this module uses email as an identity key
+    (seeded-admin match, signup allowlist)."""
+    monkeypatch.setattr(
+        httpx,
+        "post",
+        lambda *a, **k: httpx.Response(
+            200,
+            json={"access_token": "at", "id_token": _id_token(email_verified=False)},
+        ),
+    )
+    with pytest.raises(OAuthExchangeFailed):
+        exchange_code("code")
+
+
+def test_exchange_code_rejects_missing_email_verified_claim(monkeypatch):
+    claims = {k: v for k, v in FAKE_ID_TOKEN_CLAIMS.items() if k != "email_verified"}
+    import jwt
+
+    token = jwt.encode(claims, "irrelevant", algorithm="HS256")
+    monkeypatch.setattr(
+        httpx,
+        "post",
+        lambda *a, **k: httpx.Response(200, json={"access_token": "at", "id_token": token}),
+    )
+    with pytest.raises(OAuthExchangeFailed):
+        exchange_code("code")
