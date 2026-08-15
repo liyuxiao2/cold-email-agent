@@ -16,43 +16,30 @@ from cold_email.workers.shared.views import PendingDraft
 logger = logging.getLogger(__name__)
 
 
-def fetch_pending_user_ids() -> list[str]:
-    """Distinct user_ids with at least one queued outreach row.
-
-    The sweep is per-user (see drafting_task): this is the "which users have
-    work" step, run once per sweep, before any per-user SenderContext load.
-    """
-    with get_sync_session() as session:
-        rows = session.execute(text("SELECT DISTINCT user_id FROM pending_drafts")).all()
-    return [row[0] for row in rows]
-
-
-def fetch_pending_drafts(user_id: str | None = None) -> list[PendingDraft]:
-    """Return outreach rows ready to be drafted (status='queued'), latest
-    research + contact joined.
+def fetch_pending_drafts(user_id: str) -> list[PendingDraft]:
+    """Queued outreach rows for ONE user, latest research + contact joined.
 
     Reading the view — not outreach/research/company_contacts directly — is
-    what makes the batch sweep idempotent: once an outreach row is drafted its
-    status changes and it drops out of pending_drafts, so a retried sweep
-    never double-drafts it.
+    what makes a sweep idempotent: once an outreach row is drafted its status
+    changes and it drops out of pending_drafts, so a retried sweep never
+    double-drafts it.
 
-    `user_id` scopes the read to one tenant's rows. pending_drafts has NO
-    built-in user filter (it is `WHERE o.status = 'queued'` across every
-    user), so a caller that wants only one user's work MUST pass user_id —
-    omitting it returns every user's queued rows, which is exactly the
-    cross-tenant bug this parameter exists to prevent drafting_task from
-    reintroducing.
+    Filtered in the query rather than after fetching: pending_drafts has NO
+    built-in user filter of its own (it is `WHERE o.status = 'queued'` across
+    every tenant), so a worker drafting another user's row would create it in
+    the wrong mailbox with the wrong résumé — exactly the cross-tenant bug
+    this parameter exists to prevent drafting_task from reintroducing.
     """
-    query = "SELECT * FROM pending_drafts"
-    params: dict = {}
-    if user_id is not None:
-        query += " WHERE user_id = :user_id"
-        params["user_id"] = user_id
-
     with get_sync_session() as session:
-        rows = session.execute(text(query), params).mappings().all()
-    scope = f" for user {user_id}" if user_id else ""
-    logger.info(f"{len(rows)} outreach row(s) pending drafting{scope}")
+        rows = (
+            session.execute(
+                text("SELECT * FROM pending_drafts WHERE user_id = :user_id"),
+                {"user_id": user_id},
+            )
+            .mappings()
+            .all()
+        )
+    logger.info(f"{len(rows)} outreach row(s) pending drafting for user {user_id}")
     return [PendingDraft(**row) for row in rows]
 
 

@@ -20,7 +20,7 @@ from cold_email.workers.drafting.helpers.html_builder import (
     plain_text_fallback,
 )
 from cold_email.workers.shared.json_parsing import parse_fenced_json
-from cold_email.workers.shared.llm import generate_json
+from cold_email.workers.shared.llm import LlmCredentials, generate_json
 from cold_email.workers.shared.views import PendingDraft
 
 logger = logging.getLogger(__name__)
@@ -29,15 +29,24 @@ logger = logging.getLogger(__name__)
 _REQUIRED = ("subject", "company_interest", "admiration_detail", "intro", "tailored_bullets")
 
 
-def draft_email(row: PendingDraft, profile: SenderProfile) -> dict:
-    """Produce a {subject, body, body_html} draft for a lead ({} if unusable)."""
-    context = parse_email_response(generate_email(row, profile))
+def draft_email(
+    row: PendingDraft, profile: SenderProfile, *, credentials: LlmCredentials | None = None
+) -> dict:
+    """Produce a {subject, body, body_html} draft for a lead ({} if unusable).
+
+    `credentials` is threaded through to generate_json unchanged — it decides
+    which API key (platform vs. the row owner's BYOK key) and whether the
+    shared token bucket applies.
+    """
+    context = parse_email_response(generate_email(row, profile, credentials=credentials))
     if not context:
         return {}
     return assemble_email(context, row, profile)
 
 
-def generate_email(row: PendingDraft, profile: SenderProfile) -> str:
+def generate_email(
+    row: PendingDraft, profile: SenderProfile, *, credentials: LlmCredentials | None = None
+) -> str:
     """Ask the LLM for the contextual slots; returns raw JSON text.
 
     Provider/model fallback is handled inside generate_json.
@@ -56,7 +65,12 @@ def generate_email(row: PendingDraft, profile: SenderProfile) -> str:
         hook=row.hook or "",
         resume_text=profile.effective_resume_text,
     )
-    return generate_json(system=EMAIL_DRAFT_SYSTEM, prompt=messages, schema=EmailDraftContext)
+    return generate_json(
+        system=EMAIL_DRAFT_SYSTEM,
+        prompt=messages,
+        schema=EmailDraftContext,
+        credentials=credentials,
+    )
 
 
 def parse_email_response(raw: str) -> dict:

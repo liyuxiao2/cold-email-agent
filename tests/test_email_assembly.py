@@ -163,7 +163,7 @@ def test_generate_email_addresses_the_llm_prompt_by_full_contact_name(monkeypatc
 
     captured = {}
 
-    def fake_generate_json(system, prompt, schema):
+    def fake_generate_json(system, prompt, schema, credentials=None):
         captured["prompt"] = prompt
         return "{}"
 
@@ -197,7 +197,7 @@ def test_generate_email_falls_back_to_first_name_only_without_a_last_name(monkey
 
     captured = {}
 
-    def fake_generate_json(system, prompt, schema):
+    def fake_generate_json(system, prompt, schema, credentials=None):
         captured["prompt"] = prompt
         return "{}"
 

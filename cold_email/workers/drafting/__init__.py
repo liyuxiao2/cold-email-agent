@@ -1,6 +1,6 @@
 """Drafting worker package."""
 
-from cold_email.workers.drafting.drafting import drafting_task
+from cold_email.workers.drafting.drafting import drafting_recovery_task, drafting_task
 from cold_email.workers.drafting.helpers.db_helpers import fetch_pending_drafts
 from cold_email.workers.drafting.helpers.generation import (
     generate_email,
@@ -8,6 +8,7 @@ from cold_email.workers.drafting.helpers.generation import (
 )
 
 __all__ = [
+    "drafting_recovery_task",
     "drafting_task",
     "fetch_pending_drafts",
     "generate_email",
