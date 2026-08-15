@@ -222,7 +222,10 @@ async def test_trigger_discovery(admin_client):
 
 @pytest.mark.asyncio
 async def test_trigger_drafting(admin_client):
-    with patch("cold_email.workers.drafting.drafting.drafting_task.delay") as mock_delay:
+    """Drafting itself is dispatched by POST /api/outreach now; this admin
+    route triggers the same hourly recovery sweep Beat runs, for users whose
+    queued rows have been sitting long enough to look like a lost dispatch."""
+    with patch("cold_email.workers.drafting.drafting.drafting_recovery_task.delay") as mock_delay:
         mock_delay.return_value.id = "mock-draft-task-456"
         response = await admin_client.post("/api/pipeline/drafting")
 

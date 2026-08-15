@@ -379,9 +379,7 @@ async def regenerate_outreach_api(
     await session.commit()
 
     try:
-        from cold_email.workers.drafting import drafting_task
-
-        task = drafting_task.delay()
+        task = drafting_task.delay(str(user.id))
         task_id = task.id
     except Exception as e:
         logger.warning(f"Could not dispatch drafting_task to Celery broker: {e}")

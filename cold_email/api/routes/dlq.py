@@ -147,7 +147,17 @@ async def retry_dead_letter(
                 outreach.error_msg = None
             await session.delete(dl)
             if stage_val == "drafting":
-                drafting_task.delay()
+                # drafting_task is now per-user, so it needs the row's owner,
+                # not just the outreach id. Only reachable when `outreach` is
+                # None (row already gone), in which case there is no user
+                # left to re-dispatch for.
+                if outreach is not None:
+                    drafting_task.delay(str(outreach.user_id))
+                else:
+                    logger.warning(
+                        f"DLQ row {dl.id} (stage=drafting) has no matching outreach "
+                        "row; cannot determine which user's sweep to re-dispatch"
+                    )
             else:
                 logistics_task.delay(outreach_id)
 
