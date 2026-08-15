@@ -1,6 +1,7 @@
 import pytest
+from sqlalchemy import select
 
-from cold_email.database import OUTREACH_SENDING, OUTREACH_SENT
+from cold_email.database import OUTREACH_SENDING, OUTREACH_SENT, DeadLetter
 from cold_email.workers.logistics.logistics import logistics_task
 
 OUTREACH_ID = "00000000-0000-0000-0000-000000000000"
@@ -127,3 +128,158 @@ async def test_logistics_sends_existing_draft_and_advances_to_sent(
 
     await async_session.refresh(outreach)
     assert outreach.status == OUTREACH_SENT
+
+
+@pytest.mark.asyncio
+async def test_post_send_status_update_failure_does_not_resend_or_fail(
+    async_session, approved_outreach_factory, sync_session_for, monkeypatch
+):
+    """Gmail accepts the message, then update_outreach_status(SENT) raises
+    (a Cloud SQL blip, a SIGTERM between the two calls). The email already
+    went out -- this must not be reported as 'failed' (that would falsely
+    claim it was never sent), and a redelivery of the same task must not
+    call send_draft a second time."""
+    outreach = await approved_outreach_factory(scheduled_send_at=None)
+    outreach.status = OUTREACH_SENDING
+    await async_session.commit()
+
+    sent = []
+    monkeypatch.setattr(
+        "cold_email.workers.logistics.logistics.send_draft",
+        lambda creds, draft_id: sent.append(draft_id) or "msg-1",
+    )
+
+    def boom(outreach_id, status, error_msg=None):
+        raise RuntimeError("db blip")
+
+    monkeypatch.setattr("cold_email.workers.logistics.logistics.update_outreach_status", boom)
+
+    result = logistics_task(str(outreach.id))
+    assert result["status"] == "unknown"
+    assert result["message_id"] == "msg-1"
+    assert len(sent) == 1
+
+    await async_session.refresh(outreach)
+    assert outreach.status == OUTREACH_SENDING  # not 'sent', not 'failed'
+
+    dl = (await async_session.execute(select(DeadLetter))).scalar_one()
+    assert dl.stage == "logistics"
+    assert "unknown" in dl.error_msg.lower()
+
+    # A redelivery of the SAME task (Celery at-least-once, or the row simply
+    # being reprocessed) must not send again: the ticket is already spent.
+    result2 = logistics_task(str(outreach.id))
+    assert result2 == {"status": "skipped", "reason": "already_claimed"}
+    assert len(sent) == 1
+
+
+@pytest.mark.asyncio
+async def test_send_draft_network_error_is_dead_lettered_not_resent(
+    async_session, approved_outreach_factory, sync_session_for, monkeypatch
+):
+    """A non-HttpError exception from send_draft (timeout, connection reset)
+    means we cannot tell whether Gmail received the request. Never resend."""
+    outreach = await approved_outreach_factory(scheduled_send_at=None)
+    outreach.status = OUTREACH_SENDING
+    await async_session.commit()
+
+    calls = []
+
+    def boom(creds, draft_id):
+        calls.append(draft_id)
+        raise TimeoutError("connection reset")
+
+    monkeypatch.setattr("cold_email.workers.logistics.logistics.send_draft", boom)
+
+    result = logistics_task(str(outreach.id))
+    assert result["status"] == "unknown"
+    assert len(calls) == 1
+
+    await async_session.refresh(outreach)
+    assert outreach.status == OUTREACH_SENDING  # not 'failed'
+
+    dl = (await async_session.execute(select(DeadLetter))).scalar_one()
+    assert "unknown" in dl.error_msg.lower()
+
+    # Retrying must not call send_draft again -- the ticket is spent.
+    result2 = logistics_task(str(outreach.id))
+    assert result2 == {"status": "skipped", "reason": "already_claimed"}
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_concurrent_executions_of_the_same_row_send_exactly_once(
+    async_session, approved_outreach_factory, sync_session_for, monkeypatch
+):
+    """Two concurrent deliveries of the SAME already-'sending' row (Celery's
+    at-least-once delivery can redeliver one message to two workers) must not
+    both reach send_draft. The status re-check alone cannot catch this --
+    both would read 'sending' before either advances it -- so it is the claim
+    on the draft's gmail_draft_id that serializes them."""
+    from cold_email.workers.logistics import logistics as logistics_module
+
+    outreach = await approved_outreach_factory(scheduled_send_at=None)
+    outreach.status = OUTREACH_SENDING
+    await async_session.commit()
+
+    # Freeze what BOTH "concurrent" executions see when they read the send
+    # row -- i.e. as if both read it before either had claimed anything.
+    frozen_row = logistics_module.fetch_send_row(str(outreach.id))
+    monkeypatch.setattr(logistics_module, "fetch_send_row", lambda oid: frozen_row)
+    # Keep status at 'sending' across both calls so the SECOND execution
+    # still passes the first guard too, same as it would mid-race in
+    # production before either has written 'sent'.
+    monkeypatch.setattr(logistics_module, "update_outreach_status", lambda *a, **k: None)
+
+    sent = []
+    monkeypatch.setattr(
+        logistics_module,
+        "send_draft",
+        lambda creds, draft_id: sent.append(draft_id) or "msg-1",
+    )
+
+    result_a = logistics_module.logistics_task(str(outreach.id))
+    result_b = logistics_module.logistics_task(str(outreach.id))
+
+    assert len(sent) == 1
+    assert {result_a["status"], result_b["status"]} == {"success", "skipped"}
+
+
+@pytest.mark.asyncio
+async def test_pre_send_db_failure_propagates_for_autoretry(
+    async_session, approved_outreach_factory, sync_session_for, monkeypatch
+):
+    """A failure BEFORE the send ticket is claimed (looking up the owning
+    user's credentials, here) is safe to retry -- nothing has been claimed or
+    sent yet -- so it must propagate for Celery's autoretry_for to catch,
+    not be swallowed the way a post-send failure is."""
+    outreach = await approved_outreach_factory(scheduled_send_at=None)
+    outreach.status = OUTREACH_SENDING
+    await async_session.commit()
+
+    def boom(user_id):
+        raise RuntimeError("db connectivity blip")
+
+    monkeypatch.setattr("cold_email.workers.logistics.logistics.fetch_owning_user", boom)
+
+    with pytest.raises(RuntimeError, match="db connectivity blip"):
+        logistics_task(str(outreach.id))
+
+    await async_session.refresh(outreach)
+    assert outreach.status == OUTREACH_SENDING  # untouched -- safe to retry
+
+
+@pytest.mark.asyncio
+async def test_claim_send_ticket_is_a_compare_and_swap(
+    async_session, approved_outreach_factory, sync_session_for
+):
+    """The primitive Fix 1+2 relies on: the first caller to present the
+    current gmail_draft_id wins and nulls it; a second caller presenting the
+    SAME (now stale) value gets nothing."""
+    from cold_email.workers.logistics.helpers.db_helpers import claim_send_ticket, fetch_send_row
+
+    outreach = await approved_outreach_factory(scheduled_send_at=None)
+    row = fetch_send_row(str(outreach.id))
+
+    assert claim_send_ticket(row.draft_id, row.gmail_draft_id) is True
+    assert claim_send_ticket(row.draft_id, row.gmail_draft_id) is False

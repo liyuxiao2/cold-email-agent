@@ -33,11 +33,18 @@ class PendingDraft:
 
 @dataclass
 class PendingSend:
-    """One row of pending_sends: an approved, due outreach row + its latest draft."""
+    """One row of pending_sends: an approved, due outreach row + its latest draft.
+
+    draft_id is NOT a pending_sends view column -- fetch_send_row's own query
+    (cold_email/workers/logistics/helpers/db_helpers.py) adds it so
+    logistics_task can atomically claim the send by primary key (see
+    claim_send_ticket).
+    """
 
     outreach_id: str
     user_id: str
     contact_email: str
+    draft_id: str
     gmail_draft_id: str | None
     subject_line: str
     body: str

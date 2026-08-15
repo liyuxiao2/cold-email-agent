@@ -40,6 +40,23 @@ _STUCK_SENDING_SQL = text("""
       AND updated_at < now() - make_interval(mins => :mins)
 """)
 
+# The second claim. claim_due_sends (above) is the scanner's claim -- it
+# prevents two overlapping SCANS from both dispatching the same row. This one
+# prevents two concurrent EXECUTIONS of the SAME already-dispatched task
+# (Celery's at-least-once delivery can redeliver one message to two workers)
+# from both reaching send_draft: a bare status re-check is read-then-act, not
+# atomic, since both would read 'sending' before either advances it. Nulling
+# drafts.gmail_draft_id -- the one column that names the resource about to be
+# spent -- is a compare-and-swap in the same idiom: whichever caller's UPDATE
+# still finds the expected (non-null) value wins and consumes it; the other's
+# WHERE clause matches nothing once the winner has already claimed it.
+_CLAIM_SEND_TICKET_SQL = text("""
+    UPDATE drafts
+    SET gmail_draft_id = NULL
+    WHERE id = :draft_id AND gmail_draft_id = :gmail_draft_id
+    RETURNING id
+""")
+
 
 def claim_due_sends() -> list[str]:
     """Atomically flip every due 'approved' row to 'sending' and return the
@@ -63,6 +80,23 @@ def find_stuck_sending(minutes: int) -> list[str]:
     with get_sync_session() as session:
         stuck = session.execute(_STUCK_SENDING_SQL, {"mins": minutes}).scalars().all()
     return [str(outreach_id) for outreach_id in stuck]
+
+
+def claim_send_ticket(draft_id: str, gmail_draft_id: str) -> bool:
+    """Atomically consume the one-time ticket to call send_draft for one row.
+
+    Returns True if THIS call won the claim (drafts.gmail_draft_id was still
+    `gmail_draft_id` and is now NULL), False if it was already spent -- by a
+    truly concurrent execution racing this one, or by an earlier execution of
+    this same row (a prior attempt that got this far before failing further
+    down). Either way, False means send_draft must not be called again here.
+    """
+    with get_sync_session() as session:
+        claimed = session.execute(
+            _CLAIM_SEND_TICKET_SQL, {"draft_id": draft_id, "gmail_draft_id": gmail_draft_id}
+        ).first()
+        session.commit()
+    return claimed is not None
 
 
 def fetch_outreach_status_and_owner(outreach_id: str) -> tuple[str, str] | None:
@@ -94,7 +128,7 @@ def fetch_send_row(outreach_id: str) -> PendingSend | None:
             session.execute(
                 text("""
                     SELECT o.id AS outreach_id, o.user_id, ct.email AS contact_email,
-                           d.gmail_draft_id, d.subject_line, d.body
+                           d.id AS draft_id, d.gmail_draft_id, d.subject_line, d.body
                     FROM outreach o
                     JOIN company_contacts ct ON ct.id = o.contact_id
                     JOIN drafts d ON d.outreach_id = o.id

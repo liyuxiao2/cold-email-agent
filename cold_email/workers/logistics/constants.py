@@ -24,3 +24,14 @@ ERR_SEND_STATUS_UNKNOWN = (
 # sending (e.g. the draft was deleted by hand between approving and the
 # scheduled send).
 ERR_SEND_FAILED = "Gmail send failed"
+
+# Non-terminal (status untouched) dead-letter reason -- send_draft was called
+# and either raised something other than a clean HttpError, or raised nothing
+# but the follow-up status write failed. Either way Gmail may already have
+# accepted the message, so this is never surfaced as ERR_SEND_FAILED (which
+# would falsely claim nothing was sent) and never auto-retried (retrying an
+# unconfirmed send is how a duplicate delivery happens).
+ERR_SEND_OUTCOME_UNKNOWN = (
+    "Send outcome unknown after send_draft was called -- the email may already "
+    "have been delivered. Verify the mailbox before retrying."
+)
