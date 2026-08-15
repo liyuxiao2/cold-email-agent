@@ -59,6 +59,41 @@ class User(Base):
         return self.role == ROLE_ADMIN
 
 
+class Profile(Base):
+    """Per-user sender identity: the fields the email template fills.
+
+    Replaces sender_profile.PROFILE. The SenderProfile dataclass still exists as
+    the in-memory shape — only its source changed, from a module constant to
+    this row (see SenderProfile.from_row).
+
+    resume_pdf reads and writes go through cold_email.resume_store, never
+    directly, so a future move to GCS is one implementation swap.
+    """
+
+    __tablename__ = "profiles"
+
+    user_id = Column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    name = Column(String, nullable=False)
+    intro = Column(Text, nullable=False)
+    linkedin = Column(String)
+    github = Column(String)
+    website = Column(String)
+    experience_pool = Column(JSONB, nullable=False, default=list)
+    company_links = Column(JSONB, nullable=False, default=dict)
+    resume_pdf = Column(LargeBinary)
+    resume_filename = Column(String)
+    resume_text = Column(Text)
+    parsed_at = Column(DateTime(timezone=True))
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    @property
+    def has_resume(self) -> bool:
+        return self.resume_pdf is not None
+
+
 # Global research lifecycle — a fact about a company, true for every user.
 RESEARCH_FOUND = "found"
 RESEARCH_RESEARCHED = "researched"

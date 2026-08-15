@@ -27,6 +27,7 @@ dependencies = [
     "groq>=1.6.0",
     "pyjwt>=2.9",
     "cryptography>=43.0",
+    "pypdf>=5.0,<6.16.1",
 ]
 
 [dependency-groups]

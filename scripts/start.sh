@@ -16,6 +16,12 @@ python -c "from cold_email.database import Base, sync_engine; Base.metadata.crea
 echo "=== Applying database views ==="
 python -m scripts.apply_views || echo "WARNING: view provisioning failed; continuing"
 
+# create_all also can't express column storage strategy (R32) — profiles.resume_pdf
+# would otherwise sit at the default EXTENDED strategy and Postgres would waste
+# CPU trying to compress every already-compressed PDF write.
+echo "=== Applying storage DDL ==="
+python -m scripts.apply_storage || echo "WARNING: storage DDL failed; continuing"
+
 echo "Seeding admin user..."
 python -m scripts.seed_admin || echo "WARNING: admin seed failed; continuing"
 
