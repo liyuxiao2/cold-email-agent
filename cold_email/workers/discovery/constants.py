@@ -4,7 +4,7 @@
 DISCOVERY_RUN_COUNT_KEY = "discovery:run_count"
 
 # JSON schema sent to Firecrawl Extract
-LEAD_EXTRACT_SCHEMA = {
+COMPANY_EXTRACT_SCHEMA = {
     "type": "object",
     "properties": {
         "leads": {
@@ -15,7 +15,6 @@ LEAD_EXTRACT_SCHEMA = {
                     "company_name": {"type": "string"},
                     "funding_stage": {"type": "string"},
                     "founder_name": {"type": "string"},
-                    "founder_email": {"type": "string"},
                     "linkedin_url": {"type": "string"},
                 },
                 "required": ["company_name"],
@@ -31,4 +30,4 @@ EXTRACT_PROMPT = "Extract up to {limit} companies with their name and funding st
 REDIS_MAX_CONNECTIONS = 10
 
 # Extraction limits
-DEFAULT_LEADS_LIMIT = 20
+DEFAULT_COMPANIES_LIMIT = 20

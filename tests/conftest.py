@@ -166,6 +166,9 @@ def sync_session_for(monkeypatch, async_session):
         "cold_email.workers.research.helpers.db_helpers",
         "cold_email.workers.drafting.helpers.db_helpers",
         "cold_email.workers.logistics.helpers.db_helpers",
+        # discovery.py calls get_sync_session() directly (no db_helpers submodule
+        # of its own), so it needs patching here too.
+        "cold_email.workers.discovery.discovery",
     ):
         try:
             monkeypatch.setattr(f"{module}.get_sync_session", _get_sync_session, raising=False)
