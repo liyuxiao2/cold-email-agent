@@ -14,7 +14,7 @@ from ddgs import DDGS
 from firecrawl import FirecrawlApp
 
 from cold_email.config import settings
-from cold_email.database import Lead
+from cold_email.database import Company
 from cold_email.prompts.research import (
     EXTRACTION_SYSTEM,
     ResearchExtraction,
@@ -36,21 +36,21 @@ from cold_email.workers.shared.llm import generate_json
 logger = logging.getLogger(__name__)
 
 
-def find_company_url(lead: Lead) -> str | None:
+def find_company_url(company: Company) -> str | None:
     """Use DuckDuckGo (keyless) to find the best URL for a company.
 
     ddgs raises on transient failures (rate limiting, network) rather than
     returning a status code, so those propagate up and the research task's
-    autoretry recovers the lead. An empty result list is a genuine
+    autoretry recovers the company. An empty result list is a genuine
     "not found" and select_best_url returns None (terminal).
     """
-    query_parts = [lead.company_name, lead.funding_stage]
+    query_parts = [company.company_name, company.funding_stage]
     query = " ".join(arg for arg in query_parts if arg)
     results = DDGS().text(query, max_results=SEARCH_RESULT_COUNT)
-    logger.info(f"DuckDuckGo results for finding {lead.company_name}: {results}")
+    logger.info(f"DuckDuckGo results for finding {company.company_name}: {results}")
     # ddgs returns the URL under 'href'; select_best_url expects 'url'.
     candidates = [{"url": r["href"]} for r in results if r.get("href")]
-    return select_best_url(candidates, lead)
+    return select_best_url(candidates, company)
 
 
 def is_probable_homepage(url: str | None, company_name: str) -> bool:
@@ -73,25 +73,25 @@ def is_probable_homepage(url: str | None, company_name: str) -> bool:
     return company_slug in domain_slug
 
 
-def select_best_url(results: list[dict], lead: Lead) -> str | None:
+def select_best_url(results: list[dict], company: Company) -> str | None:
     """Return the first result that looks like the company's homepage, else None.
 
     Only a domain that slug-matches the company (and isn't an aggregator) is
     treated as the homepage — see is_probable_homepage. When nothing matches,
-    return None so the lead fails honestly as "no company URL" rather than on a
-    guess. Results are already in search-relevance order.
+    return None so the company fails honestly as "no company URL" rather than
+    on a guess. Results are already in search-relevance order.
     """
     for result in results:
         url = result.get("url", "")
-        if is_probable_homepage(url, lead.company_name):
+        if is_probable_homepage(url, company.company_name):
             return url
     return None
 
 
-def scrape_website(lead_url: str) -> str:
+def scrape_website(company_url: str) -> str:
     """Scrape a URL with requests/BeautifulSoup, falling back to Firecrawl."""
     try:
-        response = requests.get(lead_url, timeout=SCRAPE_TIMEOUT)
+        response = requests.get(company_url, timeout=SCRAPE_TIMEOUT)
         if response.status_code == HTTP_STATUS_OK:
             soup = BeautifulSoup(response.content, "html.parser")
 
@@ -103,7 +103,7 @@ def scrape_website(lead_url: str) -> str:
             # Fall back to Firecrawl if the scraped text is too short
             if len(text) < MIN_SCRAPED_TEXT_LEN:
                 firecrawl_app = FirecrawlApp(api_key=settings.firecrawl_api_key)
-                firecrawl_response = firecrawl_app.scrape(lead_url)
+                firecrawl_response = firecrawl_app.scrape(company_url)
                 text = firecrawl_response.markdown or ""
 
             # Truncate to avoid exceeding LLM context limits
@@ -112,7 +112,7 @@ def scrape_website(lead_url: str) -> str:
 
             return text
     except Exception as e:
-        logger.error(f"Error scraping {lead_url}: {e}")
+        logger.error(f"Error scraping {company_url}: {e}")
     return ""
 
 
