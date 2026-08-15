@@ -82,6 +82,13 @@ def exchange_code(code: str) -> GoogleIdentity:
     if not email or not sub:
         raise OAuthExchangeFailed("id_token missing sub or email")
 
+    # The canonical Sign-in-with-Google pitfall: an id_token can carry an
+    # unverified email. This code uses email as an identity key (the
+    # seeded-admin and signup-allowlist matches in upsert_user /
+    # is_signup_allowed), so an unverified email must never be trusted.
+    if claims.get("email_verified") is not True:
+        raise OAuthExchangeFailed("id_token email is not verified")
+
     return GoogleIdentity(
         sub=sub,
         email=email,
