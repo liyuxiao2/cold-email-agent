@@ -99,6 +99,52 @@ export interface CompanyPage {
   offset: number;
 }
 
+/**
+ * One company from the SHARED pool a user can still target.
+ *
+ * `contact_count` and `has_founder_contact` are the only availability
+ * signals — GET /api/companies deliberately never returns an email address
+ * (see cold_email/api/routes/companies.py's module docstring). Do not add a
+ * field here that implies an address is visible before POST /api/outreach
+ * assigns the caller a contact.
+ */
+export type PoolCompany = {
+  id: string;
+  company_name: string;
+  company_url: string | null;
+  linkedin_url: string | null;
+  founder_name: string | null;
+  funding_stage: string | null;
+  headcount: number | null;
+  industry: string | null;
+  contact_count: number;
+  has_founder_contact: boolean;
+  research: { hook: string | null; tech_stack: string[] | null };
+};
+
+export interface PoolPage {
+  items: PoolCompany[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export type SkippedOutreach = { company_id: string; reason: string };
+
+export type CreateOutreachResult = {
+  created: { outreach_id: string; company_id: string; contact_id: string }[];
+  skipped: SkippedOutreach[];
+  quota: { used: number; limit: number };
+};
+
+export type QuotaStatus = { used: number; limit: number; period_end: string };
+
+export type LlmKeyStatus = {
+  provider: 'groq' | 'gemini' | null;
+  configured: boolean;
+  last4: string | null;
+};
+
 const getApiBaseUrl = () => {
   if (typeof window !== 'undefined') {
     return process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
@@ -190,6 +236,60 @@ export function triggerDiscovery(): Promise<TaskAck> {
 
 export function triggerDrafting(): Promise<TaskAck> {
   return request<TaskAck>('/api/pipeline/drafting', { method: 'POST' });
+}
+
+/** The global company pool, filtered and with the caller's already-targeted
+ * companies excluded server-side (see companies.py). */
+export function getPool(params?: {
+  industry?: string;
+  fundingStage?: string;
+  headcountMin?: number;
+  headcountMax?: number;
+  search?: string;
+  hasFounderContact?: boolean;
+  limit?: number;
+  offset?: number;
+}): Promise<PoolPage> {
+  const query = new URLSearchParams();
+  if (params?.industry) query.set('industry', params.industry);
+  if (params?.fundingStage) query.set('funding_stage', params.fundingStage);
+  if (params?.headcountMin !== undefined) query.set('headcount_min', String(params.headcountMin));
+  if (params?.headcountMax !== undefined) query.set('headcount_max', String(params.headcountMax));
+  if (params?.search) query.set('search', params.search);
+  if (params?.hasFounderContact) query.set('has_founder_contact', 'true');
+  query.set('limit', String(params?.limit ?? 50));
+  query.set('offset', String(params?.offset ?? 0));
+  return request<PoolPage>(`/api/companies?${query.toString()}`);
+}
+
+/** Queue drafts for the selected companies. PARTIAL SUCCESS: some ids may be
+ * skipped (already targeted, exhausted, over quota) while the rest queue. */
+export function createOutreach(companyIds: string[]): Promise<CreateOutreachResult> {
+  return request<CreateOutreachResult>('/api/outreach', {
+    method: 'POST',
+    body: JSON.stringify({ company_ids: companyIds }),
+  });
+}
+
+export function getQuota(): Promise<QuotaStatus> {
+  return request<QuotaStatus>('/api/quota');
+}
+
+export function getLlmKey(): Promise<LlmKeyStatus> {
+  return request<LlmKeyStatus>('/api/llm-key');
+}
+
+/** Validated server-side with one live call before it's stored — an invalid
+ * key would otherwise fail every draft one at a time inside a Celery worker. */
+export function setLlmKey(provider: 'groq' | 'gemini', apiKey: string): Promise<TaskAck> {
+  return request<TaskAck>('/api/llm-key', {
+    method: 'PUT',
+    body: JSON.stringify({ provider, api_key: apiKey }),
+  });
+}
+
+export function deleteLlmKey(): Promise<TaskAck> {
+  return request<TaskAck>('/api/llm-key', { method: 'DELETE' });
 }
 
 export function getProfile(): Promise<SenderProfile> {
