@@ -1,5 +1,7 @@
 """Tests for assemble_email: LLM context + profile → rendered draft."""
 
+import pytest
+
 from cold_email.sender_profile import SenderProfile
 from cold_email.workers.drafting.helpers.generation import assemble_email
 from cold_email.workers.shared.views import PendingDraft
@@ -13,6 +15,11 @@ PROFILE = SenderProfile(
     experience_pool=["Wealthsimple: did a thing"],
     company_links={"Wealthsimple": "https://wealthsimple.com", "IBM": "https://ibm.com"},
 )
+
+
+@pytest.fixture
+def profile():
+    return PROFILE
 
 
 def _row(founder_name="Kenny Chan"):
@@ -75,3 +82,109 @@ def test_assemble_returns_empty_when_context_incomplete():
     ctx = _context()
     del ctx["company_interest"]
     assert assemble_email(ctx, _row(), PROFILE) == {}
+
+
+def test_greeting_uses_the_contact_not_the_founder(profile):
+    """A user emailing the CTO must not be greeted by the founder's name.
+
+    This is the most visible way contact spreading could embarrass a user, and
+    it is a one-line mistake to make.
+    """
+    from cold_email.workers.drafting.helpers.generation import assemble_email
+    from cold_email.workers.shared.views import PendingDraft
+
+    row = PendingDraft(
+        outreach_id="o1",
+        user_id="u1",
+        company_id="c1",
+        contact_id="ct1",
+        company_name="Acme",
+        company_url="https://acme.com",
+        founder_name="Ann Reed",  # the founder
+        contact_email="bo@acme.com",
+        contact_first_name="Bo",  # but we are emailing Bo
+        contact_position="CTO",
+        raw_content="raw",
+        tech_stack=["python"],
+        recent_news="news",
+        hook="hook",
+    )
+    context = {
+        "subject": "Acme",
+        "company_interest": "x",
+        "admiration_detail": "y",
+        "intro": "I'm someone.",
+        "tailored_bullets": ["A: did a thing"],
+    }
+    result = assemble_email(context, row, profile)
+    assert "Hi Bo," in result["body"]
+    assert "Ann" not in result["body"]
+
+
+def test_greeting_falls_back_when_the_contact_has_no_first_name(profile):
+    from cold_email.workers.drafting.helpers.generation import assemble_email
+    from cold_email.workers.shared.views import PendingDraft
+
+    row = PendingDraft(
+        outreach_id="o1",
+        user_id="u1",
+        company_id="c1",
+        contact_id="ct1",
+        company_name="Acme",
+        company_url="https://acme.com",
+        founder_name=None,
+        contact_email="team@acme.com",
+        contact_first_name=None,
+        contact_position="CTO",
+        raw_content="raw",
+        tech_stack=["python"],
+        recent_news="n",
+        hook="h",
+    )
+    context = {
+        "subject": "Acme",
+        "company_interest": "x",
+        "admiration_detail": "y",
+        "intro": "I'm someone.",
+        "tailored_bullets": ["A: did a thing"],
+    }
+    assert "Hi there," in assemble_email(context, row, profile)["body"]
+
+
+def test_recipient_title_constant_is_gone():
+    """'Founder' was hardcoded because there was no title column. There is now,
+    and the recipient is frequently not a founder."""
+    import cold_email.prompts.email_draft as ed
+
+    assert not hasattr(ed, "RECIPIENT_TITLE")
+
+
+def test_prompt_carries_the_contacts_real_position():
+    from cold_email.prompts.email_draft import build_email_draft_messages
+
+    prompt = build_email_draft_messages(
+        recipient_name="Bo Lin",
+        recipient_position="CTO",
+        company_name="Acme",
+        tech_stack=["python"],
+        recent_news="news",
+        hook="hook",
+        resume_text="resume",
+    )
+    assert "CTO" in prompt
+    assert "Bo Lin" in prompt
+
+
+def test_prompt_falls_back_to_founder_when_position_is_missing():
+    from cold_email.prompts.email_draft import build_email_draft_messages
+
+    prompt = build_email_draft_messages(
+        recipient_name="Bo Lin",
+        recipient_position=None,
+        company_name="Acme",
+        tech_stack=[],
+        recent_news="",
+        hook="",
+        resume_text="r",
+    )
+    assert "Founder" in prompt
