@@ -2,7 +2,6 @@ import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from cold_email.api.main import app
 from cold_email.auth.session import SESSION_COOKIE, mint_session
 from cold_email.config import settings
 from cold_email.database import ROLE_ADMIN, ROLE_USER, Base, User, get_async_session
@@ -33,8 +32,30 @@ async def async_session() -> AsyncSession:
 
 
 @pytest_asyncio.fixture
+async def admin_user_id(async_session):
+    """The admin who owns outreach rows in model-level tests."""
+    user = User(email="admin@example.com", google_sub="sub-admin", role=ROLE_ADMIN)
+    async_session.add(user)
+    await async_session.commit()
+    return user.id
+
+
+def _app():
+    """Import the FastAPI app lazily.
+
+    A module-level import would break collection for the entire suite, not just
+    the API tests, while the routes still reference models this stack is in the
+    middle of replacing.
+    """
+    from cold_email.api.main import app
+
+    return app
+
+
+@pytest_asyncio.fixture
 async def client(async_session):
     """Unauthenticated API client backed by the test database."""
+    app = _app()
 
     async def _override():
         yield async_session
@@ -46,6 +67,7 @@ async def client(async_session):
 
 
 async def _client_for_role(async_session, role: str, email: str):
+    app = _app()
     user = User(email=email, google_sub=f"sub-{role}", role=role)
     async_session.add(user)
     await async_session.commit()
@@ -71,7 +93,7 @@ async def user_client(async_session):
     c, _ = await _client_for_role(async_session, ROLE_USER, "user@example.com")
     async with c:
         yield c
-    app.dependency_overrides.clear()
+    _app().dependency_overrides.clear()
 
 
 @pytest_asyncio.fixture
@@ -80,4 +102,4 @@ async def admin_client(async_session):
     c, _ = await _client_for_role(async_session, ROLE_ADMIN, "admin@example.com")
     async with c:
         yield c
-    app.dependency_overrides.clear()
+    _app().dependency_overrides.clear()
