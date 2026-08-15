@@ -5,4 +5,8 @@
 # in a healthy flow — either drafting never ran, or the draft row is missing).
 ERR_NO_GMAIL_DRAFT = "Approved outreach has no Gmail draft to send"
 
+# Terminal per-outreach failure reason — the owning user has no usable Gmail
+# refresh token (never connected, or revoked access since).
+ERR_GMAIL_DISCONNECTED = "Gmail not connected for this user"
+
 LOGISTICS = "logistics"
