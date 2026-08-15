@@ -88,7 +88,9 @@ The entire production stack runs 24/7 in Google Cloud and Vercel:
 3. **Drafting Sweep (`cold_email.workers.drafting.drafting_task`)**:
    - Batch sweep: queries the `pending_drafts` database view for all leads that reached `status = 'researched'`.
    - **Template-driven, not freeform.** A fixed candidate-outreach template (`prompts/email_template.py`) owns structure/tone; the LLM (via `generate_json` with the `EmailDraftContext` schema) fills only the *contextual slots* — subject, a company-interest phrase, an admiration detail, and the 3 most-relevant experience bullets tailored per company from `sender_profile.PROFILE.experience_pool`. `assemble_email` fills the template (`fill_template` raises on any unfilled `{{token}}`) and renders HTML + a plain-text fallback (`helpers/html_builder.py`). A missing LLM field → `assemble_email` returns `{}` → terminal for that lead. Calls paced under the free-tier limit.
-   - Creates a **multipart** Gmail draft via `create_draft(to, subject, body, html=...)` (plain fallback + rich HTML with bold, a bullet list, and clickable GitHub/LinkedIn links) and saves `gmail_draft_id`.
+   - Creates a **multipart** Gmail draft via `create_draft(to, subject, body, html=..., attachment_path=...)` and saves `gmail_draft_id`. Structure is `multipart/mixed` wrapping a `multipart/alternative` (plain fallback + rich HTML with bold, a bullet list, and clickable GitHub/LinkedIn links) plus the attachment part.
+   - **Résumé attachment:** `cold_email/resume.pdf` is attached to every draft. The path is resolved relative to the package (not the CWD) and the file ships in the image via `COPY cold_email/`. A missing PDF is **non-fatal** — `drafting_task` logs a warning and drafts without it, so a packaging mistake degrades the email instead of failing the lead. Note `resume.pdf` (the attachment) is distinct from `resume.txt` (the text the LLM reads to tailor bullets, see `sender_profile.load_resume`).
+   - The attachment is baked in at **draft** time, since logistics later sends the stored draft by ID rather than rebuilding the message. Leads already sitting at `drafted` therefore keep whatever attachment state they were created with — use `POST /api/leads/{id}/regenerate` to rebuild them.
    - Advances lead to `status = 'drafted'` (held in review queue).
    - Scheduled via Celery Beat to sweep every 15 minutes.
 
@@ -161,6 +163,8 @@ GMAIL_REFRESH_TOKEN=...
 GMAIL_SENDER_EMAIL=...
 
 # Sender identity is code, not config — see cold_email/sender_profile.py (PROFILE).
+# Résumé is also code, not config: cold_email/resume.txt (LLM tailoring input) and
+# cold_email/resume.pdf (attached to every draft). Both are committed and baked into the image.
 
 # Frontend Vercel Config
 NEXT_PUBLIC_API_URL=https://cold-email-backend-426138953095.us-central1.run.app
