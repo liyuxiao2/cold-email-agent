@@ -75,7 +75,17 @@ class Settings(BaseSettings):
         )
         return urls
 
-    cors_origins: list[str] = ["*"]
+    # --- Auth (Stack 1a) ---
+    session_secret: str = ""       # HS256 signing key for the session JWT
+    encryption_key: str = ""       # Fernet key, 44-char urlsafe base64
+    google_redirect_uri: str = ""  # must exactly match the Google console entry
+    frontend_url: str = "http://localhost:3000"
+    admin_email: str = ""          # seeded with role='admin' on boot
+    cookie_secure: bool = True     # False only for local http development
+
+    # Explicit list, never ["*"]: a wildcard origin is incompatible with
+    # allow_credentials=True, which cookie sessions require.
+    cors_origins: list[str] = ["http://localhost:3000"]
 
     model_name: str = "gemini-flash-latest"
 

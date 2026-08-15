@@ -25,6 +25,8 @@ dependencies = [
     "google-api-python-client>=2.130",
     "ddgs>=9.14.4",
     "groq>=1.6.0",
+    "pyjwt>=2.9",
+    "cryptography>=43.0",
 ]
 
 [dependency-groups]
