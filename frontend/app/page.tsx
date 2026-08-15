@@ -7,6 +7,7 @@ import {
   RefreshCw,
   Zap,
   Building,
+  Compass,
   Mail,
   LogOut,
   AlertCircle,
@@ -289,6 +290,26 @@ export default function DashboardPage() {
               onTriggerDrafting={handleTriggerDrafting}
             />
           )}
+
+          <button
+            onClick={() => router.push('/pool')}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              padding: '10px 16px',
+              borderRadius: '10px',
+              backgroundColor: 'var(--bg-secondary)',
+              color: 'var(--text-primary)',
+              border: '1px solid var(--border-color)',
+              fontWeight: 600,
+              fontSize: '0.875rem',
+              cursor: 'pointer',
+            }}
+          >
+            <Compass size={16} color="#818cf8" />
+            Browse Pool
+          </button>
 
           <button
             onClick={loadData}
