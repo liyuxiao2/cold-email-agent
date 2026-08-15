@@ -27,6 +27,7 @@ from cold_email.database import (
     OUTREACH_QUEUED,
     OUTREACH_REJECTED,
     OUTREACH_SENDING,
+    OUTREACH_SENT,
     RESEARCH_RESEARCHED,
     Company,
     Outreach,
@@ -355,14 +356,26 @@ async def _resolve_send_time(
         return [None] * count
 
     # Existing scheduled sends constrain the walk, so a batch spreads instead of
-    # stacking on the same slot.
+    # stacking on the same slot. OUTREACH_SENT is included deliberately: the
+    # cap is on how many emails leave the mailbox on a given local day, and a
+    # row that has already SENT still counts against that day's budget just
+    # as much as one still waiting to go out. Excluding 'sent' let a burst of
+    # approvals that finished sending before noon reopen the whole day's
+    # slots to a second wave of approvals -- ten sent by noon, then a second
+    # batch of ten approved at noon saw an empty `existing` and scheduled six
+    # more of them for the SAME day, 16 sends against a cap of 10. Bounded to
+    # the last two days (not unbounded) purely to keep this query cheap as
+    # 'sent' rows accumulate -- next_slot only ever groups by LOCAL calendar
+    # day, and two days of UTC padding covers every timezone's day boundary
+    # drift from UTC.
     existing = list(
         (
             await session.execute(
                 select(Outreach.scheduled_send_at).where(
                     Outreach.user_id == user.id,
-                    Outreach.status.in_([OUTREACH_APPROVED, OUTREACH_SENDING]),
+                    Outreach.status.in_([OUTREACH_APPROVED, OUTREACH_SENDING, OUTREACH_SENT]),
                     Outreach.scheduled_send_at.isnot(None),
+                    Outreach.scheduled_send_at >= datetime.now(UTC) - timedelta(days=2),
                 )
             )
         )
