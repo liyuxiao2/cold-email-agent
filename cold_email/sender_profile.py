@@ -1,22 +1,11 @@
-"""Static sender identity and resume loader for candidate-outreach drafting.
+"""The in-memory shape of a user's sender identity.
 
-The drafting stage fills a fixed template (see prompts/email_template.py); this
-module supplies the deterministic sender fields and loads the full resume text
-(from resume.txt) which the LLM uses to dynamically tailor introductions and
-experience bullets. A static fallback experience pool is maintained for safety and tests.
+The dataclass survives the multi-tenant migration; only its SOURCE changed —
+from a frozen module-level constant plus resume.txt in the repo, to a `profiles`
+row per user (see SenderProfile.from_row).
 """
 
 from dataclasses import dataclass, field
-from pathlib import Path
-
-_CURRENT_DIR = Path(__file__).resolve().parent
-_RESUME_PATH = _CURRENT_DIR / "resume.txt"
-
-
-def load_resume() -> str:
-    if _RESUME_PATH.exists():
-        return _RESUME_PATH.read_text(encoding="utf-8")
-    return ""
 
 
 @dataclass(frozen=True)
@@ -30,39 +19,36 @@ class SenderProfile:
     experience_pool: list[str] = field(default_factory=list)
     company_links: dict[str, str] = field(default_factory=dict)
 
+    @classmethod
+    def from_row(cls, row) -> "SenderProfile":
+        """Build from a `profiles` row.
+
+        Coerces NULL JSONB columns to empty containers so callers never have to
+        None-check them — the template fill would otherwise raise mid-draft.
+        """
+        return cls(
+            name=row.name,
+            intro=row.intro,
+            linkedin=row.linkedin or "",
+            github=row.github or "",
+            website=row.website or "",
+            resume_text=row.resume_text or "",
+            experience_pool=list(row.experience_pool or []),
+            company_links=dict(row.company_links or {}),
+        )
+
     @property
     def first_name(self) -> str:
         return self.name.split()[0]
 
     @property
     def effective_resume_text(self) -> str:
+        """The résumé text for the drafting prompt.
+
+        Falls back to synthesising from intro + experience_pool, which is what a
+        user who filled the profile form without uploading a PDF needs.
+        """
         if self.resume_text:
             return self.resume_text
         pool = "\n".join(f"- {b}" for b in self.experience_pool)
         return f"{self.intro}\n\nExperience:\n{pool}"
-
-
-PROFILE = SenderProfile(
-    name="Liyu Xiao",
-    intro=(
-        "My name is Liyu, a Computer Science student at McMaster incoming at "
-        "Bot Auto as a Software Engineer, and previously at Wealthsimple and IBM."
-    ),
-    linkedin="https://www.linkedin.com/in/liyu-xiao-593176206/",
-    github="https://github.com/liyuxiao2",
-    website="https://liyuxiao.ca/",
-    resume_text=load_resume(),
-    experience_pool=[
-        "Bot Auto: Incoming Software Engineer developing fleet navigation software.",
-        "Wealthsimple: Offloaded logging to a Kafka/S3/Snowflake pipeline, cutting latency by 80% and reducing database storage from 30TB to 500GB.",
-        "IBM: Built backend services, creating courses for millions of learners.",
-        "Cold Email Agent: Architected an autonomous agent to research, draft, and send cold emails to 500+ companies a week.",
-    ],
-    company_links={
-        "Wealthsimple": "https://www.wealthsimple.com/en-ca",
-        "IBM": "https://www.ibm.com/ca-en",
-        "Bot Auto": "https://bot.auto/",
-        "Qoherent": "https://qoherent.ai/",
-        "Cold Email Agent": "https://github.com/liyuxiao2/cold-email-agent",
-    },
-)
