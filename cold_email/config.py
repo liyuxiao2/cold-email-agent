@@ -83,6 +83,11 @@ class Settings(BaseSettings):
     admin_email: str = ""  # seeded with role='admin' on boot
     cookie_secure: bool = True  # False only for local http development
 
+    # Who may sign in. Empty means ONLY `admin_email` — default-deny, because a
+    # signed-in user can send mail from the shared mailbox. Widen deliberately.
+    allowed_signup_emails: list[str] = []
+    allowed_signup_domain: str = ""  # e.g. "example.com"; empty disables domain matching
+
     # Explicit list, never ["*"]: a wildcard origin is incompatible with
     # allow_credentials=True, which cookie sessions require.
     cors_origins: list[str] = ["http://localhost:3000"]

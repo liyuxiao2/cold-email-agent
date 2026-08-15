@@ -67,6 +67,11 @@ function LoginCard() {
           Sign-in failed. Please try again.
         </p>
       )}
+      {error === 'not_allowed' && (
+        <p style={{ color: '#f87171', fontSize: '0.85rem' }}>
+          This account isn&apos;t authorized for this instance.
+        </p>
+      )}
       {failure && (
         <p style={{ color: '#f87171', fontSize: '0.85rem' }}>Sign-in failed: {failure}</p>
       )}
