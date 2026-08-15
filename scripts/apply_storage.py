@@ -1,18 +1,30 @@
-"""Apply migrations/storage.sql — column storage strategies create_all can't express.
+"""Apply post-create_all DDL that Base.metadata.create_all cannot express or
+will not apply to a table that already exists.
 
 Run on every boot by start.sh, right after Base.metadata.create_all (and after
 scripts/apply_views.py, though order between the two does not matter — each
-file is independent and idempotent). SQLAlchemy's Column API has no way to set
-a column's TOAST storage strategy (R32), so a create_all-only database leaves
-profiles.resume_pdf at the default EXTENDED strategy, and Postgres spends CPU
-attempting to compress every PDF write for no size gain.
+file is independent and idempotent). Two distinct gaps land here:
 
-SQL_FILES is a list, not a single path, so a later stack that hits the same
+  * Column storage strategy (R32): SQLAlchemy's Column API has no way to set
+    a column's TOAST storage strategy, so a create_all-only database leaves
+    profiles.resume_pdf at the default EXTENDED strategy, and Postgres spends
+    CPU attempting to compress every PDF write for no size gain
+    (migrations/storage.sql).
+  * ALTER TABLE on an existing table (R43): create_all only ever issues
+    CREATE TABLE — it never alters a table that already exists. A migration
+    that adds columns to `users` (008_user_llm_and_quota.sql) is therefore
+    invisible to create_all on any database that already has a `users` table,
+    which in production is every deploy after the first. Written entirely as
+    `ADD COLUMN IF NOT EXISTS`, so it's as safe to run on every boot as the
+    storage DDL.
+
+SQL_FILES is a list, not a single path, so a later stack that hits either
 class of gap (another column needing a non-default storage strategy, a
-FILLFACTOR tweak, etc.) can add a file here instead of inventing a third
-mechanism. Every file in the list must be safe to run unconditionally on every
-boot — `ALTER ... SET STORAGE` already is, since setting the same strategy
-twice is a no-op.
+FILLFACTOR tweak, another ALTER TABLE ADD COLUMN on an existing table, etc.)
+can add a file here instead of inventing a third mechanism. Every file in the
+list must be safe to run unconditionally on every boot — `ALTER ... SET
+STORAGE` and `ADD COLUMN IF NOT EXISTS` both already are, since re-applying
+either is a no-op.
 
 Uses the sync engine (not psql — start.sh runs Python) via exec_driver_sql, the
 same as apply_views.py, for the same reason: no bind parameters, and this
@@ -29,7 +41,10 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 MIGRATIONS_DIR = Path(__file__).resolve().parent.parent / "migrations"
-SQL_FILES = (MIGRATIONS_DIR / "storage.sql",)
+SQL_FILES = (
+    MIGRATIONS_DIR / "storage.sql",
+    MIGRATIONS_DIR / "008_user_llm_and_quota.sql",
+)
 
 
 def apply_storage() -> None:

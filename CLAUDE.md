@@ -486,12 +486,28 @@ runs `Base.metadata.create_all` (which creates the new `companies` /
 / `available_contacts` against whatever tables already exist) plus
 `scripts/apply_storage.py` (which sets `profiles.resume_pdf`'s TOAST storage
 strategy to `EXTERNAL` — another thing `Base.metadata.create_all` cannot
-express, same class of gap as the views). Both run on **every boot**, not
-just the first, because the underlying DDL is idempotent (re-declaring a view
-or re-applying the same `STORAGE` strategy is a no-op). If a future stack
-needs another `create_all`-inexpressible column setting, append the new
-`.sql` file to `scripts/apply_storage.py`'s `SQL_FILES` tuple — don't invent a
-second script-plus-boot-hook for it. Skipping 006 is
+express, same class of gap as the views — **and**, since this stack, applies
+`migrations/008_user_llm_and_quota.sql`'s `ADD COLUMN IF NOT EXISTS` on
+`users` every boot too). Both run on **every boot**, not
+just the first, because the underlying DDL is idempotent (re-declaring a view,
+re-applying the same `STORAGE` strategy, or re-running `ADD COLUMN IF NOT
+EXISTS` is a no-op).
+
+**The general rule:** `create_all` only ever issues `CREATE TABLE` — it never
+alters a table that already exists. A migration that only creates NEW tables
+needs nothing further (create_all already covers it, same as 006's new
+`companies`/`company_contacts`/`outreach` tables). **Any migration that
+`ALTER`s an EXISTING table must be appended to `scripts/apply_storage.py`'s
+`SQL_FILES` tuple** — like 008's three `ADD COLUMN IF NOT EXISTS` statements
+on `users` — or it is silently invisible on every deploy after the first,
+because nothing in the boot sequence otherwise runs it. Don't invent a second
+script-plus-boot-hook for this class of gap.
+
+Migration 006 predates this rule and is the one exception still requiring a
+manual, one-time apply (see below) — its `ALTER TABLE`s aren't idempotent
+`ADD COLUMN IF NOT EXISTS` shapes, and it also renames/backfills data, which
+`apply_storage.py`'s "safe on every boot" contract does not cover. Skipping
+006 is
 the DEFAULT outcome of a normal deploy, not an edge case, and it "succeeds"
 quietly:
 - `create_all` makes the new tables, empty. The old `leads` table and its data

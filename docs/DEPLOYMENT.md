@@ -41,22 +41,28 @@ This guide provides instructions for deploying the **Cold Email Agent** backend 
 
 > ⚠️ **Back up `ENCRYPTION_KEY` before any user signs in.** It is unrecoverable: losing or rotating it makes every stored Gmail refresh token undecryptable and forces every user to re-consent through Google Sign-In.
 
-### Post-`create_all` DDL (résumé storage)
+### Post-`create_all` DDL (résumé storage, and any ALTER on an existing table)
 
 Production provisions its schema with `Base.metadata.create_all`
-(`scripts/start.sh`), which cannot express every DDL SQLAlchemy's Column API
-has no vocabulary for — column storage strategy is one. `profiles.resume_pdf`
-needs `STORAGE EXTERNAL` (out-of-line, uncompressed) instead of Postgres's
-default `EXTENDED` (compress then out-of-line): PDFs are already compressed,
-so the default strategy burns CPU on every write for zero size gain.
+(`scripts/start.sh`), which only ever issues `CREATE TABLE` — it cannot
+express every DDL SQLAlchemy's Column API has no vocabulary for (column
+storage strategy is one), and it never `ALTER`s a table that already exists,
+even if the ORM model gained a new column.
 
 | What | Where | When it runs |
 |---|---|---|
 | `ALTER TABLE profiles ALTER COLUMN resume_pdf SET STORAGE EXTERNAL` | `migrations/storage.sql` | Applied via `scripts/apply_storage.py`, called from `scripts/start.sh` on **every** container boot (idempotent — re-applying the same storage strategy is a no-op) |
+| `ALTER TABLE users ADD COLUMN IF NOT EXISTS llm_api_key_enc / llm_provider / monthly_draft_quota` | `migrations/008_user_llm_and_quota.sql` | Applied via `scripts/apply_storage.py`, same mechanism and cadence as above — `create_all` alone would leave a production `users` table (which already existed before this stack) missing all three columns forever |
 
-If a later change needs another `create_all`-inexpressible column setting,
-append its `.sql` file to `scripts/apply_storage.py`'s `SQL_FILES` tuple —
-don't add a second script-plus-boot-hook mechanism for it.
+**The general rule**: any migration that `ALTER`s an EXISTING table (not just
+storage strategy — an `ADD COLUMN`, a `FILLFACTOR` tweak, anything
+`create_all` can't or won't apply to a table that's already there) must be
+appended to `scripts/apply_storage.py`'s `SQL_FILES` tuple, written as
+idempotent DDL safe to run on every boot. Don't add a second
+script-plus-boot-hook mechanism for it. (Migration 006 predates this rule and
+still needs a manual, one-time `psql` apply — see CLAUDE.md's deployment
+section — because it renames tables and backfills data rather than shaping as
+a safe-to-repeat `ADD COLUMN IF NOT EXISTS`.)
 
 **Résumé uploads are capped at 5MB** (`resume_store.MAX_RESUME_BYTES`), enforced
 server-side (`validate_resume`) regardless of what the upload UI pre-checks.

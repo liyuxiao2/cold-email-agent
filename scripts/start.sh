@@ -18,7 +18,10 @@ python -m scripts.apply_views || echo "WARNING: view provisioning failed; contin
 
 # create_all also can't express column storage strategy (R32) — profiles.resume_pdf
 # would otherwise sit at the default EXTENDED strategy and Postgres would waste
-# CPU trying to compress every already-compressed PDF write.
+# CPU trying to compress every already-compressed PDF write — AND create_all
+# only ever CREATEs tables, never ALTERs an existing one (R43), so a migration
+# that adds columns to `users` needs a real ALTER TABLE applied here too, or
+# it's simply invisible on any database that already has that table.
 echo "=== Applying storage DDL ==="
 python -m scripts.apply_storage || echo "WARNING: storage DDL failed; continuing"
 
