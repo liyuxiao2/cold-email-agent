@@ -1,35 +1,49 @@
 """Shared failure handlers for Celery workers.
 
-Two failure shapes recur across workers, and they map to opposite state-machine
-outcomes. Centralizing them keeps that distinction consistent everywhere:
+Two failure shapes recur, mapping to opposite state-machine outcomes:
 
-  * terminal  — a permanent problem with THIS lead (no email, empty draft, no
-    draft to send). Mark it 'failed' so it leaves its current state, drops out
-    of the pending_* views, and is never retried.
+  * terminal  — a permanent problem. Mark the entity 'failed' so it leaves its
+    current state, drops out of the pending_* views, and is not retried. Also
+    write a DLQ row so it stays independently retryable.
   * transient — a passing problem (network blip, rate limit). Log it and leave
-    the lead's status untouched so the next run naturally retries it.
+    the status untouched so the next run retries naturally.
+
+After the tenancy split, terminal failure needs TWO entry points because the two
+levels update different tables and mean different things:
+
+  * fail_company  — nobody can email this company (research found no contacts)
+  * fail_outreach — this user's draft or send broke
+
+One function with a nullable company_id/outreach_id pair would push the branch
+into every call site and make the CHECK constraint reachable by accident.
 """
 
 import logging
 
-from cold_email.workers.shared.db_helpers import record_dead_letter, update_lead_status
+from cold_email.database import OUTREACH_FAILED, RESEARCH_FAILED
+from cold_email.workers.shared.db_helpers import (
+    record_dead_letter,
+    update_company_research_status,
+    update_outreach_status,
+)
 
 logger = logging.getLogger(__name__)
 
 
-def handle_terminal_failure(lead_id: str, reason: str, *, stage: str, task_name: str) -> None:
-    """Mark a lead 'failed' and dead-letter it for later retry.
-
-    Terminal failures leave the lead's current state and land in the DLQ
-    (dead_letter table) so they're visible on the lead AND independently
-    retryable. `stage`/`task_name` let the DLQ retry re-dispatch to the right
-    worker.
-    """
-    update_lead_status(lead_id, "failed", error_msg=reason)
-    record_dead_letter(lead_id, task_name=task_name, stage=stage, error_msg=reason)
-    logger.warning(f"Lead {lead_id} marked failed and dead-lettered ({stage}): {reason}")
+def fail_company(company_id: str, reason: str, *, stage: str, task_name: str) -> None:
+    """Terminal failure at the GLOBAL level: this company is not emailable."""
+    update_company_research_status(company_id, RESEARCH_FAILED, error_msg=reason)
+    record_dead_letter(company_id=company_id, task_name=task_name, stage=stage, error_msg=reason)
+    logger.warning(f"Company {company_id} failed and dead-lettered ({stage}): {reason}")
 
 
-def handle_transient_failure(lead_id: str, error: Exception | str) -> None:
-    """Log a transient failure and leave the lead's status unchanged for retry."""
-    logger.error(f"Transient failure on lead {lead_id}: {error}")
+def fail_outreach(outreach_id: str, reason: str, *, stage: str, task_name: str) -> None:
+    """Terminal failure at the PER-USER level: this user's outreach broke."""
+    update_outreach_status(outreach_id, OUTREACH_FAILED, error_msg=reason)
+    record_dead_letter(outreach_id=outreach_id, task_name=task_name, stage=stage, error_msg=reason)
+    logger.warning(f"Outreach {outreach_id} failed and dead-lettered ({stage}): {reason}")
+
+
+def handle_transient_failure(entity_id: str, error: Exception | str) -> None:
+    """Log a transient failure, leaving status untouched so the next run retries."""
+    logger.error(f"Transient failure on {entity_id}: {error}")

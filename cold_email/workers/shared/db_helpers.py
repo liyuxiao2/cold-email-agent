@@ -6,42 +6,64 @@ specific to a single worker stay in that worker's helpers/db_helpers.py.
 
 import logging
 
-from cold_email.database import DeadLetter, Lead, get_sync_session
+from cold_email.database import Company, DeadLetter, Outreach, get_sync_session
 
 logger = logging.getLogger(__name__)
 
 
-def record_dead_letter(lead_id: str, task_name: str, stage: str, error_msg: str) -> None:
-    """Insert a dead-letter row for a terminally-failed task.
+def update_company_research_status(
+    company_id: str, status: str, error_msg: str | None = None
+) -> None:
+    """Set a company's GLOBAL research status (found | researched | failed)."""
+    with get_sync_session() as session:
+        company = session.get(Company, company_id)
+        if company is None:
+            logger.warning(f"Company {company_id} not found; cannot set status {status}")
+            return
+        company.research_status = status
+        if error_msg is not None:
+            company.error_msg = error_msg
+        session.commit()
 
-    Called alongside the 'failed' status write so every terminal failure is
-    independently retryable (POST /api/dlq/retry) with the context needed to
-    re-dispatch: which lead, which task, which stage, and why it died.
+
+def update_outreach_status(outreach_id: str, status: str, error_msg: str | None = None) -> None:
+    """Set one user's PER-USER outreach status."""
+    with get_sync_session() as session:
+        outreach = session.get(Outreach, outreach_id)
+        if outreach is None:
+            logger.warning(f"Outreach {outreach_id} not found; cannot set status {status}")
+            return
+        outreach.status = status
+        if error_msg is not None:
+            outreach.error_msg = error_msg
+        session.commit()
+
+
+def record_dead_letter(
+    *,
+    task_name: str,
+    stage: str,
+    error_msg: str,
+    company_id: str | None = None,
+    outreach_id: str | None = None,
+) -> None:
+    """Write a DLQ row at exactly one level.
+
+    Keyword-only and exclusive by construction: the CHECK constraint on the
+    table is the backstop, but passing neither (or both) is a programming
+    error worth catching here, where the traceback names the caller.
     """
+    if not (bool(company_id) ^ bool(outreach_id)):
+        raise ValueError("record_dead_letter requires exactly one of company_id / outreach_id")
+
     with get_sync_session() as session:
         session.add(
             DeadLetter(
-                lead_id=lead_id,
+                company_id=company_id,
+                outreach_id=outreach_id,
                 task_name=task_name,
                 stage=stage,
                 error_msg=error_msg,
             )
         )
         session.commit()
-        logger.info(f"Lead {lead_id} dead-lettered at stage {stage!r}: {error_msg}")
-
-
-def update_lead_status(lead_id: str, status: str, error_msg: str | None = None) -> None:
-    """Update the status (and optional error message) of a lead.
-
-    This is the single write point for the pipeline's state machine — every
-    worker advances a lead through it, so it lives at the shared level.
-    """
-    with get_sync_session() as session:
-        db_lead = session.get(Lead, lead_id)
-        if db_lead:
-            db_lead.status = status
-            if error_msg is not None:
-                db_lead.error_msg = error_msg
-            session.commit()
-            logger.info(f"Lead {lead_id} status updated to {status!r}")
