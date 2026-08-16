@@ -23,7 +23,7 @@ interface ReviewDeckProps {
   onReject: (leadId: string, notes: string) => Promise<boolean>;
   onRegenerate: (lead: LeadItem) => void;
   onTriggerDiscovery: () => void;
-  /** Gates the empty-state Run Discovery button. Cosmetic only — see below. */
+  /** Gates the empty-state Run Discovery button. */
   isAdmin: boolean;
 }
 
@@ -82,9 +82,6 @@ export default function ReviewDeck({
             All generated drafts have been approved or dispatched. Run discovery or drafting sweep to populate new leads.
           </p>
           <div style={{ display: 'flex', gap: '12px', justifyContent: 'center' }}>
-            {/* Cosmetic only. `require_admin` on POST /api/pipeline/discovery is
-                the real boundary — hiding a button is not authorization. Gated
-                here so a non-admin isn't offered a control that only 403s. */}
             {isAdmin && (
               <button
                 onClick={onTriggerDiscovery}

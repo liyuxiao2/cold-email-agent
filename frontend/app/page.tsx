@@ -40,8 +40,6 @@ export default function DashboardPage() {
   const [draftQueue, setDraftQueue] = useState<LeadItem[]>([]);
   const [allLeads, setAllLeads] = useState<LeadItem[]>([]);
   const [activeTab, setActiveTab] = useState<'review' | 'explorer'>('review');
-  // The explorer's filters live here, not in LeadExplorer: that component
-  // unmounts on a tab switch, so local state would reset them each time.
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(true);

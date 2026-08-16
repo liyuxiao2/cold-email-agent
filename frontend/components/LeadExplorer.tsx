@@ -14,13 +14,7 @@ interface LeadExplorerProps {
 
 const STATUSES = ['all', 'found', 'researched', 'drafted', 'approved', 'sent', 'rejected', 'failed'];
 
-/**
- * Presentational: the all-leads table.
- *
- * The filters live in page.tsx rather than here on purpose: this component
- * unmounts on a tab switch, and local state would reset the filters every time
- * the user left and came back.
- */
+/** Presentational: the all-leads table. */
 export default function LeadExplorer({
   leads,
   statusFilter,
