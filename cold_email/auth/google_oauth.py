@@ -1,12 +1,4 @@
-"""Google OAuth2 authorization-code flow — the only module that talks to Google.
-
-One consent screen yields both identity (openid/email/profile) and send
-capability (gmail.compose), so login and Gmail connection are a single step.
-
-The existing Google Cloud OAuth client is reused: gmail_client_id and
-gmail_client_secret identify this *application* and are required to refresh any
-user's token. They are app-level, not per-user.
-"""
+"""Google OAuth2 authorization-code flow — the only module that talks to Google."""
 
 import logging
 import urllib.parse
@@ -15,21 +7,15 @@ from dataclasses import dataclass
 import httpx
 import jwt
 
+from cold_email.auth.constants import (
+    GOOGLE_AUTHORIZE_URL,
+    GOOGLE_SCOPES,
+    GOOGLE_TOKEN_URL,
+    TOKEN_TIMEOUT_SECONDS,
+)
 from cold_email.config import settings
 
 logger = logging.getLogger(__name__)
-
-GOOGLE_AUTHORIZE_URL = "https://accounts.google.com/o/oauth2/v2/auth"
-GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"  # noqa: S105 (endpoint, not a secret)
-
-GOOGLE_SCOPES = [
-    "openid",
-    "email",
-    "profile",
-    "https://www.googleapis.com/auth/gmail.compose",
-]
-
-TOKEN_TIMEOUT_SECONDS = 15
 
 
 class OAuthExchangeFailed(RuntimeError):
@@ -48,13 +34,7 @@ class GoogleIdentity:
 
 
 def build_authorize_url(state: str) -> str:
-    """Build the consent-screen URL the browser is sent to.
-
-    access_type=offline requests a refresh token; prompt=consent forces Google
-    to return one even for a user who has consented before. Without it, only a
-    user's first-ever authorization yields a refresh token, so a re-signup
-    produces an account that cannot send.
-    """
+    """Build the consent-screen URL the browser is sent to."""
     params = {
         "client_id": settings.gmail_client_id,
         "redirect_uri": settings.google_redirect_uri,
@@ -95,10 +75,6 @@ def exchange_code(code: str) -> GoogleIdentity:
     if not id_token:
         raise OAuthExchangeFailed("Google response contained no id_token")
 
-    # The id_token came over TLS straight from Google's token endpoint in
-    # response to our client_secret, so its claims are trusted without
-    # re-verifying the signature. (Signature verification would be required if
-    # the token arrived from the client instead.)
     claims = jwt.decode(id_token, options={"verify_signature": False})
 
     email = claims.get("email")
@@ -111,7 +87,5 @@ def exchange_code(code: str) -> GoogleIdentity:
         email=email,
         name=claims.get("name"),
         picture_url=claims.get("picture"),
-        # Absent when the user has consented before — a send problem, not a
-        # login problem. The caller surfaces it as gmail_connected: false.
         refresh_token=payload.get("refresh_token"),
     )
