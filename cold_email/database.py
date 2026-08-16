@@ -1,7 +1,17 @@
 import contextlib
 import uuid
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text, create_engine, func
+from sqlalchemy import (
+    Column,
+    DateTime,
+    ForeignKey,
+    Integer,
+    LargeBinary,
+    String,
+    Text,
+    create_engine,
+    func,
+)
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, relationship, sessionmaker
@@ -11,6 +21,37 @@ from cold_email.config import settings
 
 class Base(DeclarativeBase):
     pass
+
+
+ROLE_USER = "user"
+ROLE_ADMIN = "admin"
+
+
+class User(Base):
+    """An authenticated person.
+
+    `role` is TEXT rather than a Postgres enum: extending an enum requires a
+    migration, and a future 'viewer' or 'owner' role should not need DDL.
+    Validity is enforced in the application layer.
+    """
+
+    __tablename__ = "users"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    google_sub = Column(String, unique=True, index=True)
+    email = Column(String, unique=True, nullable=False)
+    name = Column(String)
+    picture_url = Column(String)
+    role = Column(String, nullable=False, default=ROLE_USER)
+    # Fernet ciphertext of the Gmail refresh token — never a plaintext token.
+    gmail_refresh_token_enc = Column(LargeBinary)
+    gmail_sender_email = Column(String)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    @property
+    def is_admin(self) -> bool:
+        return self.role == ROLE_ADMIN
 
 
 class Lead(Base):

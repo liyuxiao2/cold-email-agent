@@ -4,7 +4,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from cold_email.config import settings
 from cold_email.database import Base
 
-TEST_DB_URL = settings.database_url.replace("/cold_email", "/cold_email_test")
+# rsplit on the final "/" rather than a plain string replace: the latter also
+# matches "cold_email" inside the username (postgresql://cold_email:...@...),
+# producing a URL that authenticates as a nonexistent "cold_email_test" role.
+TEST_DB_URL = settings.database_url.rsplit("/", 1)[0] + "/cold_email_test"
 
 
 @pytest_asyncio.fixture(scope="function")
