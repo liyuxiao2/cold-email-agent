@@ -1,12 +1,6 @@
 'use client';
 
-/**
- * Client-side auth state.
- *
- * The session cookie is httpOnly, so JavaScript cannot read it. Identity is
- * therefore never derived from the cookie — it comes exclusively from
- * `GET /api/auth/me`, which the browser answers by replaying the cookie.
- */
+/** Client-side auth state. */
 
 import { createContext, useContext, useEffect, useState } from 'react';
 
@@ -34,9 +28,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Deliberately not routed through lib/api.ts `request`: a 401 here is the
-    // normal "not signed in yet" answer, not an error, and must not trigger the
-    // redirect (the login page renders inside this provider too).
     fetch(`${API_URL}/api/auth/me`, { credentials: 'include', cache: 'no-store' })
       .then((r) => (r.ok ? (r.json() as Promise<User>) : null))
       .then(setUser)

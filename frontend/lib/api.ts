@@ -73,7 +73,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${getApiBaseUrl()}${path}`, {
     ...init,
     cache: 'no-store',
-    credentials: 'include', // required: cookies are not sent cross-origin by default
+    credentials: 'include',
     headers: { 'Content-Type': 'application/json', ...init?.headers },
   });
 
