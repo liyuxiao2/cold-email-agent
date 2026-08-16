@@ -36,10 +36,7 @@ def test_decrypt_rejects_tampered_ciphertext():
 
 
 def test_missing_encryption_key_raises(monkeypatch):
-    """`_cipher` is `@lru_cache(maxsize=1)`, so a naive test would pass by
-    cache-warming rather than exercising the guard — the cache must be
-    cleared before AND after so this test actually calls the guard and later
-    tests are unaffected."""
+    """An empty ENCRYPTION_KEY raises even through the lru_cache."""
     _cipher.cache_clear()
     monkeypatch.setattr(settings, "encryption_key", "")
     try:
