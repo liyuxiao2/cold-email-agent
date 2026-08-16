@@ -22,6 +22,7 @@ from cold_email.auth.session import (
     mint_state,
     verify_state,
 )
+from cold_email.auth.signup_policy import is_signup_allowed
 from cold_email.config import settings
 from cold_email.database import User, get_async_session
 
@@ -38,7 +39,9 @@ async def upsert_user(session: AsyncSession, identity: GoogleIdentity) -> User:
 
     if user is None:
         user = (
-            await session.execute(select(User).where(User.email == identity.email))
+            await session.execute(
+                select(User).where(User.email == identity.email, User.google_sub.is_(None))
+            )
         ).scalar_one_or_none()
 
     if user is None:
@@ -83,6 +86,13 @@ async def google_callback(
         logger.warning(f"OAuth exchange failed: {exc}")
         return RedirectResponse(
             url=f"{settings.frontend_url}/login?error=oauth_failed",
+            status_code=status.HTTP_302_FOUND,
+        )
+
+    if not is_signup_allowed(identity.email):
+        logger.warning(f"Denied sign-in for unauthorized email: {identity.email}")
+        return RedirectResponse(
+            url=f"{settings.frontend_url}/login?error=not_allowed",
             status_code=status.HTTP_302_FOUND,
         )
 
