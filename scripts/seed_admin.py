@@ -1,12 +1,4 @@
-"""Idempotently ensure ADMIN_EMAIL exists with role='admin'.
-
-Run on every boot by start.sh. The seeded row has a NULL google_sub; the OAuth
-callback claims it by email on that person's first sign-in and preserves the
-admin role.
-
-Without this, a fresh deployment has no admin, so nobody can trigger discovery
-or research and the pool never fills.
-"""
+"""Idempotently ensure ADMIN_EMAIL exists with role='admin'."""
 
 import asyncio
 import logging

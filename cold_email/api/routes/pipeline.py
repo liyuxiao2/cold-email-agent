@@ -67,12 +67,7 @@ async def trigger_research_api(
     session: AsyncSession = Depends(get_async_session),
     admin: User = Depends(require_admin),
 ):
-    """Re-dispatch research for leads stuck in 'found' — discovered but never researched.
-
-    Discovery only enqueues research for brand-new leads, so a lead found while
-    the worker was down (or whose research task was lost) stays orphaned in
-    'found' and is never retried. This requeues them through the research worker.
-    """
+    """Re-dispatch research for leads stuck in 'found' — discovered but never researched."""
     from cold_email.workers.research import research_task
 
     result = await session.execute(select(Lead).where(Lead.status == "found"))
