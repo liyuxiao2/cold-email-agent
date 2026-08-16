@@ -23,6 +23,8 @@ interface ReviewDeckProps {
   onReject: (leadId: string, notes: string) => Promise<boolean>;
   onRegenerate: (lead: LeadItem) => void;
   onTriggerDiscovery: () => void;
+  /** Gates the empty-state Run Discovery button. */
+  isAdmin: boolean;
 }
 
 /** Presentational: the draft review queue and its reject modal. */
@@ -34,6 +36,7 @@ export default function ReviewDeck({
   onReject,
   onRegenerate,
   onTriggerDiscovery,
+  isAdmin,
 }: ReviewDeckProps) {
   const [rejectingLeadId, setRejectingLeadId] = useState<string | null>(null);
   const [rejectNotes, setRejectNotes] = useState<string>('');
@@ -79,20 +82,22 @@ export default function ReviewDeck({
             All generated drafts have been approved or dispatched. Run discovery or drafting sweep to populate new leads.
           </p>
           <div style={{ display: 'flex', gap: '12px', justifyContent: 'center' }}>
-            <button
-              onClick={onTriggerDiscovery}
-              style={{
-                padding: '10px 20px',
-                borderRadius: '10px',
-                backgroundColor: 'var(--accent-primary)',
-                color: '#fff',
-                border: 'none',
-                fontWeight: 600,
-                cursor: 'pointer',
-              }}
-            >
-              Run Discovery
-            </button>
+            {isAdmin && (
+              <button
+                onClick={onTriggerDiscovery}
+                style={{
+                  padding: '10px 20px',
+                  borderRadius: '10px',
+                  backgroundColor: 'var(--accent-primary)',
+                  color: '#fff',
+                  border: 'none',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                }}
+              >
+                Run Discovery
+              </button>
+            )}
           </div>
         </div>
       ) : (
