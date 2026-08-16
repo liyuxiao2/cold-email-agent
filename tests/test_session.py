@@ -6,6 +6,7 @@ import pytest
 
 from cold_email.auth.session import (
     SESSION_COOKIE,
+    SessionSecretMissing,
     mint_session,
     mint_state,
     verify_session,
@@ -64,3 +65,17 @@ def test_state_is_not_accepted_as_a_session():
 @pytest.mark.parametrize("bad", ["", "  ", None])
 def test_empty_state_rejected(bad):
     assert verify_state(bad) is False
+
+
+def test_missing_session_secret_raises_a_clear_error(monkeypatch):
+    """An empty SESSION_SECRET must fail loudly and identifiably, not as a
+    generic 401/500 indistinguishable from a broken frontend."""
+    monkeypatch.setattr(settings, "session_secret", "")
+    with pytest.raises(SessionSecretMissing):
+        mint_session(uuid.uuid4())
+    with pytest.raises(SessionSecretMissing):
+        verify_session("some-token")
+    with pytest.raises(SessionSecretMissing):
+        mint_state()
+    with pytest.raises(SessionSecretMissing):
+        verify_state("some-state")
