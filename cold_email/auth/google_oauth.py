@@ -82,6 +82,9 @@ def exchange_code(code: str) -> GoogleIdentity:
     if not email or not sub:
         raise OAuthExchangeFailed("id_token missing sub or email")
 
+    if claims.get("email_verified") is not True:
+        raise OAuthExchangeFailed("id_token email is not verified")
+
     return GoogleIdentity(
         sub=sub,
         email=email,
