@@ -7,8 +7,6 @@ import { Zap } from 'lucide-react';
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
 function LoginCard() {
-  // useSearchParams() opts the tree out of static prerendering, so this lives
-  // behind the <Suspense> boundary below rather than in the page component.
   const error = useSearchParams().get('error');
   const [signingIn, setSigningIn] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);

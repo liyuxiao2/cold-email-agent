@@ -31,13 +31,7 @@ import ReviewDeck from '@/components/ReviewDeck';
 
 const errorMessage = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
-/**
- * The dashboard container: auth gate, all shared state, all data fetching.
- *
- * Everything visual lives in the four presentational components below. State
- * that only one of them reads (copy-button feedback, reject-modal text, the
- * explorer's filters) lives inside that component instead of here.
- */
+/** The dashboard container: auth gate, all shared state, all data fetching. */
 export default function DashboardPage() {
   const { user, loading: authLoading, logout } = useAuth();
   const router = useRouter();
