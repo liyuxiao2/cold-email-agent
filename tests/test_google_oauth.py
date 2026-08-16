@@ -63,16 +63,14 @@ def test_exchange_code_returns_identity(monkeypatch):
             },
         )
 
-    monkeypatch.setattr(
-        httpx, "post", lambda *a, **k: handler(None)
-    )
+    monkeypatch.setattr(httpx, "post", lambda *a, **k: handler(None))
 
     identity = exchange_code("auth-code")
     assert identity.sub == "1234567890"
     assert identity.email == "person@example.com"
     assert identity.name == "A Person"
     assert identity.picture_url == "https://example.com/p.jpg"
-    assert identity.refresh_token == "rt-secret"
+    assert identity.refresh_token == "rt-secret"  # noqa: S105 (test fixture, not a real credential)
 
 
 def test_exchange_code_tolerates_missing_refresh_token(monkeypatch):

@@ -4,7 +4,6 @@ on:
   push:
     branches: [main, discovery, tidy]
   pull_request:
-    branches: [main]
 
 jobs:
   lint:
@@ -62,6 +61,11 @@ jobs:
       CELERY_RESULT_BACKEND: redis://localhost:6379/1
       FIRECRAWL_API_KEY: test-key
       ANTHROPIC_API_KEY: test-key
+      # Throwaway CI-only credentials for the auth stack's tests (test_crypto.py,
+      # test_session.py, test_auth.py) — never used outside this workflow, so
+      # committing them is fine.
+      SESSION_SECRET: test-session-secret-not-used-in-production
+      ENCRYPTION_KEY: CP1IS-7KJ4ioJsjeu11G0dKnNdV6I_cspMuya9JHc2s=
 
     steps:
       - uses: actions/checkout@v4

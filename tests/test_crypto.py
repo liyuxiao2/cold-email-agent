@@ -4,12 +4,12 @@ from cold_email.auth.crypto import decrypt, encrypt
 
 
 def test_round_trip():
-    secret = "1//0eXaMpLeRefreshToken"
+    secret = "1//0eXaMpLeRefreshToken"  # noqa: S105 (test fixture, not a real credential)
     assert decrypt(encrypt(secret)) == secret
 
 
 def test_ciphertext_is_not_plaintext():
-    secret = "1//0eXaMpLeRefreshToken"
+    secret = "1//0eXaMpLeRefreshToken"  # noqa: S105 (test fixture, not a real credential)
     assert secret.encode() not in encrypt(secret)
 
 
@@ -19,7 +19,7 @@ def test_same_plaintext_gives_different_ciphertexts():
     Two encryptions of the same value must differ, or an attacker with read
     access to the table could tell which users share a token.
     """
-    secret = "same-value"
+    secret = "same-value"  # noqa: S105 (test fixture, not a real credential)
     a, b = encrypt(secret), encrypt(secret)
     assert a != b
     assert decrypt(a) == decrypt(b) == secret
