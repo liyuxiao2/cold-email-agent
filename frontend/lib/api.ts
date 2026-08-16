@@ -41,6 +41,19 @@ export interface PipelineStats {
   failed: number;
 }
 
+export interface TaskAck {
+  success: boolean;
+  message?: string;
+  task_id?: string;
+}
+
+export interface LeadPage {
+  items: LeadItem[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
 const getApiBaseUrl = () => {
   if (typeof window !== 'undefined') {
     return process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
@@ -48,72 +61,74 @@ const getApiBaseUrl = () => {
   return process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 };
 
-export async function fetchPipelineStats(): Promise<PipelineStats> {
-  const res = await fetch(`${getApiBaseUrl()}/api/pipeline/stats`, { cache: 'no-store' });
-  if (!res.ok) throw new Error(`Failed to fetch stats: ${res.statusText}`);
-  return res.json();
+/**
+ * The single door every backend call goes through.
+ *
+ * Two things are easy to forget at a call site and fatal when forgotten, so
+ * they live here instead: `credentials: 'include'` (the session cookie is not
+ * sent cross-origin without it, so every request would arrive anonymous) and
+ * the 401 -> /login redirect.
+ */
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(`${getApiBaseUrl()}${path}`, {
+    ...init,
+    cache: 'no-store',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json', ...init?.headers },
+  });
+
+  if (response.status === 401 && typeof window !== 'undefined') {
+    window.location.href = '/login';
+    throw new Error('Not authenticated');
+  }
+  if (!response.ok) {
+    throw new Error(`${response.status} ${await response.text()}`);
+  }
+  return response.json() as Promise<T>;
 }
 
-export async function fetchDraftQueue(): Promise<LeadItem[]> {
-  const res = await fetch(`${getApiBaseUrl()}/api/leads/drafts`, { cache: 'no-store' });
-  if (!res.ok) throw new Error(`Failed to fetch draft queue: ${res.statusText}`);
-  return res.json();
+export function fetchPipelineStats(): Promise<PipelineStats> {
+  return request<PipelineStats>('/api/pipeline/stats');
 }
 
-export async function fetchLeads(params?: { status?: string; search?: string; limit?: number; offset?: number }) {
+export function fetchDraftQueue(): Promise<LeadItem[]> {
+  return request<LeadItem[]>('/api/leads/drafts');
+}
+
+export function fetchLeads(params?: {
+  status?: string;
+  search?: string;
+  limit?: number;
+  offset?: number;
+}): Promise<LeadPage> {
   const query = new URLSearchParams();
   if (params?.status) query.set('status', params.status);
   if (params?.search) query.set('search', params.search);
   if (params?.limit) query.set('limit', params.limit.toString());
   if (params?.offset) query.set('offset', params.offset.toString());
 
-  const res = await fetch(`${getApiBaseUrl()}/api/leads?${query.toString()}`, { cache: 'no-store' });
-  if (!res.ok) throw new Error(`Failed to fetch leads: ${res.statusText}`);
-  return res.json() as Promise<{ items: LeadItem[]; total: number; limit: number; offset: number }>;
+  return request<LeadPage>(`/api/leads?${query.toString()}`);
 }
 
-export async function approveLead(leadId: string) {
-  const res = await fetch(`${getApiBaseUrl()}/api/leads/${leadId}/approve`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-  });
-  if (!res.ok) throw new Error(`Failed to approve lead: ${res.statusText}`);
-  return res.json();
+export function approveLead(leadId: string): Promise<TaskAck> {
+  return request<TaskAck>(`/api/leads/${leadId}/approve`, { method: 'POST' });
 }
 
-export async function rejectLead(leadId: string, notes: string = '') {
-  const res = await fetch(`${getApiBaseUrl()}/api/leads/${leadId}/reject`, {
+export function rejectLead(leadId: string, notes: string = ''): Promise<TaskAck> {
+  return request<TaskAck>(`/api/leads/${leadId}/reject`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ notes }),
   });
-  if (!res.ok) throw new Error(`Failed to reject lead: ${res.statusText}`);
-  return res.json();
 }
 
-export async function regenerateDraft(leadId: string) {
-  const res = await fetch(`${getApiBaseUrl()}/api/leads/${leadId}/regenerate`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-  });
-  if (!res.ok) throw new Error(`Failed to regenerate draft: ${res.statusText}`);
-  return res.json();
+export function regenerateDraft(leadId: string): Promise<TaskAck> {
+  return request<TaskAck>(`/api/leads/${leadId}/regenerate`, { method: 'POST' });
 }
 
-export async function triggerDiscovery() {
-  const res = await fetch(`${getApiBaseUrl()}/api/pipeline/discovery`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-  });
-  if (!res.ok) throw new Error(`Failed to trigger discovery: ${res.statusText}`);
-  return res.json();
+export function triggerDiscovery(): Promise<TaskAck> {
+  return request<TaskAck>('/api/pipeline/discovery', { method: 'POST' });
 }
 
-export async function triggerDrafting() {
-  const res = await fetch(`${getApiBaseUrl()}/api/pipeline/drafting`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-  });
-  if (!res.ok) throw new Error(`Failed to trigger drafting: ${res.statusText}`);
-  return res.json();
+export function triggerDrafting(): Promise<TaskAck> {
+  return request<TaskAck>('/api/pipeline/drafting', { method: 'POST' });
 }
