@@ -83,6 +83,9 @@ class Settings(BaseSettings):
     admin_email: str = ""  # seeded with role='admin' on boot
     cookie_secure: bool = True  # False only for local http development
 
+    allowed_signup_emails: list[str] = []
+    allowed_signup_domain: str = ""  # e.g. "example.com"; empty disables domain matching
+
     # Explicit list, never ["*"]: a wildcard origin is incompatible with
     # allow_credentials=True, which cookie sessions require.
     cors_origins: list[str] = ["http://localhost:3000"]

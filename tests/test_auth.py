@@ -1,9 +1,12 @@
 import pytest
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from cold_email.api.routes.auth import upsert_user
 from cold_email.auth.crypto import decrypt
 from cold_email.auth.google_oauth import GoogleIdentity
+from cold_email.auth.signup_policy import is_signup_allowed
+from cold_email.config import settings
 from cold_email.database import ROLE_ADMIN, ROLE_USER, User
 
 
@@ -60,6 +63,22 @@ async def test_seeded_admin_is_claimed_by_email_and_keeps_its_role(async_session
 
 
 @pytest.mark.asyncio
+async def test_upsert_does_not_rebind_an_already_bound_row_by_email(async_session):
+    """A row already bound to one sub must not be reassigned via an email match."""
+    bound = User(email="person@example.com", google_sub="google-sub-A", role=ROLE_USER)
+    async_session.add(bound)
+    await async_session.commit()
+
+    with pytest.raises(IntegrityError):
+        await upsert_user(async_session, _identity(sub="google-sub-B"))
+    await async_session.rollback()
+
+    rows = (await async_session.execute(select(User))).scalars().all()
+    assert len(rows) == 1
+    assert rows[0].google_sub == "google-sub-A"  # original row untouched
+
+
+@pytest.mark.asyncio
 async def test_upsert_without_refresh_token_leaves_column_null(async_session):
     user = await upsert_user(async_session, _identity(refresh_token=None))
     assert user.gmail_refresh_token_enc is None
@@ -100,6 +119,7 @@ async def test_callback_sets_an_httponly_session_cookie(client, monkeypatch, asy
     from cold_email.api.routes import auth as auth_routes
     from cold_email.auth.session import SESSION_COOKIE, mint_state
 
+    monkeypatch.setattr(settings, "allowed_signup_emails", ["person@example.com"])
     monkeypatch.setattr(auth_routes, "exchange_code", lambda code: _identity())
 
     response = await client.get(
@@ -148,3 +168,86 @@ async def test_logout_clears_the_cookie(user_client):
         'ce_session=""' in response.headers["set-cookie"]
         or "Max-Age=0" in response.headers["set-cookie"]
     )
+
+
+# --- Signup allowlist (default-deny) -----------------------------------------
+
+
+@pytest.fixture
+def _clear_allowlist(monkeypatch):
+    """Every allowlist test starts from a clean, deliberately-narrow slate."""
+    monkeypatch.setattr(settings, "admin_email", "")
+    monkeypatch.setattr(settings, "allowed_signup_emails", [])
+    monkeypatch.setattr(settings, "allowed_signup_domain", "")
+
+
+def test_admin_email_is_allowed_even_with_both_allowlists_empty(_clear_allowlist, monkeypatch):
+    monkeypatch.setattr(settings, "admin_email", "admin@example.com")
+    assert is_signup_allowed("admin@example.com") is True
+
+
+def test_admin_email_match_is_case_insensitive(_clear_allowlist, monkeypatch):
+    monkeypatch.setattr(settings, "admin_email", "Admin@Example.com")
+    assert is_signup_allowed("admin@example.com") is True
+
+
+def test_explicitly_allowed_email_is_allowed(_clear_allowlist, monkeypatch):
+    monkeypatch.setattr(settings, "allowed_signup_emails", ["ally@example.com"])
+    assert is_signup_allowed("Ally@Example.com") is True
+
+
+def test_matching_domain_is_allowed(_clear_allowlist, monkeypatch):
+    monkeypatch.setattr(settings, "allowed_signup_domain", "example.com")
+    assert is_signup_allowed("anyone@example.com") is True
+    assert is_signup_allowed("Anyone@Example.COM") is True
+
+
+def test_non_matching_domain_is_denied(_clear_allowlist, monkeypatch):
+    monkeypatch.setattr(settings, "allowed_signup_domain", "example.com")
+    assert is_signup_allowed("anyone@other.com") is False
+
+
+def test_unrecognized_email_is_denied_by_default(_clear_allowlist):
+    assert is_signup_allowed("stranger@nowhere.com") is False
+
+
+@pytest.mark.asyncio
+async def test_callback_with_allowed_email_creates_a_user(client, monkeypatch, async_session):
+    from cold_email.api.routes import auth as auth_routes
+    from cold_email.auth.session import mint_state
+
+    monkeypatch.setattr(settings, "admin_email", "")
+    monkeypatch.setattr(settings, "allowed_signup_emails", ["person@example.com"])
+    monkeypatch.setattr(settings, "allowed_signup_domain", "")
+    monkeypatch.setattr(auth_routes, "exchange_code", lambda code: _identity())
+
+    response = await client.get(
+        "/api/auth/google/callback",
+        params={"code": "good-code", "state": mint_state()},
+        follow_redirects=False,
+    )
+    assert response.status_code == 302
+    assert response.headers["location"] == settings.frontend_url
+    users = (await async_session.execute(select(User))).scalars().all()
+    assert len(users) == 1
+    assert users[0].email == "person@example.com"
+
+
+@pytest.mark.asyncio
+async def test_callback_with_denied_email_creates_no_user(client, monkeypatch, async_session):
+    from cold_email.api.routes import auth as auth_routes
+    from cold_email.auth.session import mint_state
+
+    monkeypatch.setattr(settings, "admin_email", "")
+    monkeypatch.setattr(settings, "allowed_signup_emails", [])
+    monkeypatch.setattr(settings, "allowed_signup_domain", "")
+    monkeypatch.setattr(auth_routes, "exchange_code", lambda code: _identity())
+
+    response = await client.get(
+        "/api/auth/google/callback",
+        params={"code": "good-code", "state": mint_state()},
+        follow_redirects=False,
+    )
+    assert response.status_code == 302
+    assert "error=not_allowed" in response.headers["location"]
+    assert (await async_session.execute(select(User))).scalars().all() == []
