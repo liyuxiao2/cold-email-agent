@@ -72,8 +72,17 @@ written, and it is Fernet-encrypted before it touches the database.
 - **Session:** an HS256 JWT in an `httpOnly` cookie, so JavaScript cannot read
   it. The frontend never parses the cookie — auth state comes exclusively from
   `GET /api/auth/me`. Cross-origin means `credentials: 'include'` on every
-  request and an explicit `CORS_ORIGINS` list (never `["*"]`, which is
-  incompatible with `allow_credentials=True`).
+  request and an explicit `CORS_ORIGINS` list — `["*"]` is rejected outright
+  because browsers refuse a wildcard origin alongside `allow_credentials=True`,
+  which would silently break cookie-based sessions.
+- **Admin seeding:** `scripts/seed_admin.py` runs from `scripts/start.sh` on
+  every container boot. It is idempotent — creates the `ADMIN_EMAIL` user if
+  absent or promotes it to `role='admin'` if it already exists — and is
+  guarded so a failed seed cannot prevent the container from starting.
+- ⚠️ **`ENCRYPTION_KEY` is unrecoverable.** It's the Fernet key protecting every
+  stored Gmail refresh token. Losing or rotating it makes all of those tokens
+  undecryptable and forces every user to re-consent through Google Sign-In.
+  Generate it once and back it up somewhere durable *before* any user signs in.
 - **Frontend layout** (`frontend/`):
   - `lib/api.ts` — every backend call goes through one `request<T>()` helper
     that owns `credentials: 'include'`, `cache: 'no-store'`, and the
@@ -84,11 +93,13 @@ written, and it is Fernet-encrypted before it touches the database.
     `<Suspense>` boundary so the route still prerenders.
   - `app/page.tsx` — container: auth gate, **all** shared dashboard state
     (`stats`, `draftQueue`, `allLeads`, `activeTab`, `loading`, `actionLoading`,
-    trigger flags, `notification`) and **all** fetching. No state library, no
-    data-fetching library.
+    trigger flags, `notification`, and the explorer's `statusFilter` /
+    `searchQuery`) and **all** fetching. No state library, no data-fetching
+    library. The explorer filters were pulled back up from `LeadExplorer` into
+    `page.tsx` so they survive a tab switch instead of resetting.
   - `components/{PipelineStats,ReviewDeck,LeadExplorer,AdminPanel}.tsx` —
-    presentational, props-only, explicitly typed. Each keeps just its own UI
-    state (`copiedId`, the reject-modal text, the explorer's filters).
+    presentational, props-only, explicitly typed. Each keeps just its own
+    local UI state — `copiedId` and the reject-modal text — nothing more.
   - `AdminPanel` renders only when `user.role === 'admin'`. **Cosmetic only** —
     `require_admin` on the backend is the real boundary.
 

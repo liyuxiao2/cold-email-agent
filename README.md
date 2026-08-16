@@ -50,7 +50,31 @@ Edit `.env` and fill in your API keys:
 - `GEMINI_API_KEY` - get from [aistudio.google.com](https://aistudio.google.com/apikey)
 - `GROQ_API_KEY` - get from [console.groq.com](https://console.groq.com/keys)
 - `HUNTER_API_KEY` - get from [hunter.io](https://hunter.io) (founder email discovery)
-- `GMAIL_*` - OAuth2 refresh-token flow; mint with `uv run python scripts/gmail_auth.py`
+- `GMAIL_*` - OAuth2 client credentials for the shared sending mailbox (see [Google OAuth setup](#google-oauth-setup) below — the web consent flow now supersedes minting these with `scripts/gmail_auth.py`)
+- Auth vars (`SESSION_SECRET`, `ENCRYPTION_KEY`, `GOOGLE_REDIRECT_URI`, `FRONTEND_URL`, `ADMIN_EMAIL`, `COOKIE_SECURE`, `CORS_ORIGINS`) - see [Google OAuth setup](#google-oauth-setup) below
+
+### Google OAuth setup
+
+Sign-in and sending both go through the same Google Cloud OAuth client — no separate credentials to provision.
+
+1. **Add scopes to the existing OAuth client.** In the Google Cloud Console, under the OAuth consent screen's scopes, make sure these four are enabled:
+   - `openid`
+   - `email`
+   - `profile`
+   - `https://www.googleapis.com/auth/gmail.compose`
+2. **Register the web redirect URI** on the OAuth client (Credentials -> your client -> Authorized redirect URIs):
+   ```
+   https://<backend>/api/auth/google/callback
+   ```
+   Use your actual backend host, e.g. `http://localhost:8080/...` locally or the Cloud Run URL in production — it must exactly match `GOOGLE_REDIRECT_URI`.
+3. **Generate the two auth keys** and put them in `.env`:
+   ```bash
+   uv run python -c "import secrets; print(secrets.token_urlsafe(48))"          # SESSION_SECRET
+   uv run python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"   # ENCRYPTION_KEY
+   ```
+4. **Set `ADMIN_EMAIL`** to the Google account that should be seeded as the first admin. It's created (or promoted, if it already exists) on every boot — see `scripts/seed_admin.py`.
+
+`scripts/gmail_auth.py` still exists for minting a standalone Gmail refresh token, but the web consent flow above is now how users (including the sender mailbox owner) authenticate — you no longer need to run that script as part of setup.
 
 ### 3. Run everything
 
