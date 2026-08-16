@@ -1,9 +1,4 @@
-"""Google Sign-In routes.
-
-One consent flow yields identity and Gmail send capability together. The
-callback is the only place a Google refresh token is ever written, and it is
-encrypted before it touches the database.
-"""
+"""Google Sign-In routes."""
 
 import logging
 
@@ -36,13 +31,7 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 async def upsert_user(session: AsyncSession, identity: GoogleIdentity) -> User:
-    """Create or update the user behind a Google identity.
-
-    Matched on google_sub first (stable forever), then by email to claim a row
-    seeded before that person's first sign-in. The seeded row's `role` is
-    preserved — silently demoting the only admin would lock discovery and
-    research away from everyone.
-    """
+    """Create or update the user behind a Google identity."""
     user = (
         await session.execute(select(User).where(User.google_sub == identity.sub))
     ).scalar_one_or_none()
@@ -61,8 +50,6 @@ async def upsert_user(session: AsyncSession, identity: GoogleIdentity) -> User:
     user.name = identity.name
     user.picture_url = identity.picture_url
 
-    # Only overwrite when Google actually returned one. A re-login that omits
-    # refresh_token must not wipe a working token.
     if identity.refresh_token:
         user.gmail_refresh_token_enc = encrypt(identity.refresh_token)
         user.gmail_sender_email = identity.email
@@ -106,7 +93,7 @@ async def google_callback(
         key=SESSION_COOKIE,
         value=mint_session(user.id),
         max_age=SESSION_TTL_DAYS * 24 * 60 * 60,
-        httponly=True,  # unreadable by JavaScript, so an XSS cannot steal it
+        httponly=True,
         secure=settings.cookie_secure,
         samesite="none" if settings.cookie_secure else "lax",
         path="/",

@@ -18,8 +18,6 @@ class RejectRequest(BaseModel):
     notes: str = ""
 
 
-# Login-gated in Stack 1a; user-SCOPED in Stack 1b once `outreach` exists.
-# Until then every authenticated user sees the same leads.
 @router.get("/drafts")
 async def get_draft_review_queue(
     session: AsyncSession = Depends(get_async_session),
@@ -37,9 +35,6 @@ async def get_draft_review_queue(
 
     items = []
     for lead in leads:
-        # Newest draft by created_at — consistent with the pending_sends view.
-        # (version is vestigial: commit_draft leaves it =1, so keying on version
-        # returns a stale row after a regenerate.)
         latest_draft = max(lead.drafts, key=lambda d: d.created_at, default=None)
         latest_research = (
             max(lead.research, key=lambda r: r.created_at, default=None) if lead.research else None
@@ -120,9 +115,6 @@ async def list_leads(
 
     items = []
     for lead in leads:
-        # Newest draft by created_at — consistent with the pending_sends view.
-        # (version is vestigial: commit_draft leaves it =1, so keying on version
-        # returns a stale row after a regenerate.)
         latest_draft = max(lead.drafts, key=lambda d: d.created_at, default=None)
         latest_research = (
             max(lead.research, key=lambda r: r.created_at, default=None) if lead.research else None

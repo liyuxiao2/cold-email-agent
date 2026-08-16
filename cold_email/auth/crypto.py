@@ -1,9 +1,4 @@
-"""Fernet encryption for secrets at rest (Gmail refresh tokens, LLM API keys).
-
-The single place in the codebase where secrets are enciphered. Fernet is
-authenticated encryption (AES-CBC + HMAC), so a tampered ciphertext raises
-rather than decrypting to garbage.
-"""
+"""Fernet encryption for secrets at rest (Gmail refresh tokens, LLM API keys)."""
 
 from functools import lru_cache
 
@@ -18,12 +13,7 @@ class EncryptionKeyMissing(RuntimeError):
 
 @lru_cache(maxsize=1)
 def _cipher() -> Fernet:
-    """Build the Fernet cipher once.
-
-    Fails loudly rather than defaulting: an app that boots without a key would
-    silently write unencrypted refresh tokens, and nothing downstream would
-    notice until a breach.
-    """
+    """Build the Fernet cipher once."""
     if not settings.encryption_key:
         raise EncryptionKeyMissing(
             "ENCRYPTION_KEY is not set. Generate one with: "

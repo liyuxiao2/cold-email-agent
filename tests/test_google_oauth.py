@@ -10,9 +10,6 @@ from cold_email.auth.google_oauth import (
     exchange_code,
 )
 
-# A Google id_token payload is a JWT; we only read its claims, so tests build
-# an unsigned one and the module is configured not to re-verify the signature
-# (the token arrived over TLS directly from Google's token endpoint).
 FAKE_ID_TOKEN_CLAIMS = {
     "sub": "1234567890",
     "email": "person@example.com",

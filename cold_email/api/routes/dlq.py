@@ -11,8 +11,6 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/dlq", tags=["dlq"])
 
-# Maps a dead-letter row's stage back to (reset-status, re-dispatch). The lead is
-# reset to the stage's input state so re-dispatch re-runs that stage cleanly.
 _DLQ_STAGE_RESET = {
     "research": "found",
     "drafting": "researched",
@@ -58,10 +56,7 @@ async def retry_dead_letter(
     session: AsyncSession = Depends(get_async_session),
     user: User = Depends(get_current_user),
 ):
-    """Re-dispatch dead-lettered tasks: reset each lead to its stage's input
-    state, re-enqueue the worker, and clear the row. A task that fails again is
-    written back to the DLQ by handle_terminal_failure, so the queue self-cleans.
-    """
+    """Re-dispatch dead-lettered tasks: reset each lead, re-enqueue, and clear the row."""
     from cold_email.workers.drafting import drafting_task
     from cold_email.workers.logistics import logistics_task
     from cold_email.workers.research import research_task
