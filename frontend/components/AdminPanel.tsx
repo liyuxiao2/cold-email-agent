@@ -10,15 +10,7 @@ interface AdminPanelProps {
   onTriggerDrafting: () => void;
 }
 
-/**
- * Presentational: the pipeline trigger buttons, rendered only for admins.
- *
- * Hiding these buttons is COSMETIC ONLY. The real boundary is the
- * `require_admin` dependency on POST /api/pipeline/* in the backend — a
- * non-admin who calls those endpoints directly gets a 403 regardless of what
- * this component renders. Never treat the client-side role check as
- * authorization.
- */
+/** Presentational: the pipeline trigger buttons, rendered only for admins. */
 export default function AdminPanel({
   triggeringDiscovery,
   triggeringDrafting,

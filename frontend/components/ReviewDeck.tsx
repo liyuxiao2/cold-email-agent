@@ -25,12 +25,7 @@ interface ReviewDeckProps {
   onTriggerDiscovery: () => void;
 }
 
-/**
- * Presentational: the draft review queue and its reject modal.
- *
- * Owns only UI-local state — which card was copied, and the open/typing state
- * of the reject modal. The queue itself and every mutation live in page.tsx.
- */
+/** Presentational: the draft review queue and its reject modal. */
 export default function ReviewDeck({
   leads,
   loading,
