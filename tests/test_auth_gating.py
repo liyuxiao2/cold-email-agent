@@ -4,6 +4,7 @@ ADMIN_ONLY = [
     "/api/pipeline/discovery",
     "/api/pipeline/research",
     "/api/pipeline/drafting",
+    "/api/dlq/retry",
 ]
 
 USER_ROUTES = [
