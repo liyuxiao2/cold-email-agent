@@ -64,17 +64,7 @@ async def test_seeded_admin_is_claimed_by_email_and_keeps_its_role(async_session
 
 @pytest.mark.asyncio
 async def test_upsert_does_not_rebind_an_already_bound_row_by_email(async_session):
-    """A row already bound to sub 'A' must not be silently reassigned to sub
-    'B' just because a new sign-in shares its email — that would be an
-    account takeover (including of the admin row and its stored, decryptable
-    refresh token). The email fallback must only ever claim a row whose
-    google_sub is still NULL.
-
-    `email` is unique in the schema, so once the takeover path is closed,
-    this now-unmatched identity can't be inserted as a fresh row either — it
-    surfaces as a loud IntegrityError instead of a silent takeover, which is
-    the safe outcome: no ambiguity about which account just got a new owner.
-    """
+    """A row already bound to one sub must not be reassigned via an email match."""
     bound = User(email="person@example.com", google_sub="google-sub-A", role=ROLE_USER)
     async_session.add(bound)
     await async_session.commit()
@@ -129,9 +119,6 @@ async def test_callback_sets_an_httponly_session_cookie(client, monkeypatch, asy
     from cold_email.api.routes import auth as auth_routes
     from cold_email.auth.session import SESSION_COOKIE, mint_state
 
-    # Not testing the allowlist here — just the happy path — so allow this
-    # identity's email explicitly rather than depending on whatever
-    # ADMIN_EMAIL happens to be set to in this environment.
     monkeypatch.setattr(settings, "allowed_signup_emails", ["person@example.com"])
     monkeypatch.setattr(auth_routes, "exchange_code", lambda code: _identity())
 

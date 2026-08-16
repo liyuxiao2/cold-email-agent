@@ -83,8 +83,6 @@ class Settings(BaseSettings):
     admin_email: str = ""  # seeded with role='admin' on boot
     cookie_secure: bool = True  # False only for local http development
 
-    # Who may sign in. Empty means ONLY `admin_email` — default-deny, because a
-    # signed-in user can send mail from the shared mailbox. Widen deliberately.
     allowed_signup_emails: list[str] = []
     allowed_signup_domain: str = ""  # e.g. "example.com"; empty disables domain matching
 

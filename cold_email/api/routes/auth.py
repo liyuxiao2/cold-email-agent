@@ -90,8 +90,6 @@ async def google_callback(
         )
 
     if not is_signup_allowed(identity.email):
-        # No DB row is created for a denied identity. 302, not 403: the
-        # caller is a browser mid-redirect, not an API client.
         logger.warning(f"Denied sign-in for unauthorized email: {identity.email}")
         return RedirectResponse(
             url=f"{settings.frontend_url}/login?error=not_allowed",
