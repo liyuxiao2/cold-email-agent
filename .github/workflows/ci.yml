@@ -4,7 +4,6 @@ on:
   push:
     branches: [main, discovery, tidy]
   pull_request:
-    branches: [main]
 
 jobs:
   lint:
@@ -24,10 +23,10 @@ jobs:
         run: uv sync --dev
 
       - name: Ruff check
-        run: uv run ruff check --fix .
+        run: uv run ruff check .
 
       - name: Ruff format
-        run: uv run ruff format .
+        run: uv run ruff format --check .
 
   test:
     runs-on: ubuntu-latest
@@ -62,6 +61,8 @@ jobs:
       CELERY_RESULT_BACKEND: redis://localhost:6379/1
       FIRECRAWL_API_KEY: test-key
       ANTHROPIC_API_KEY: test-key
+      SESSION_SECRET: test-session-secret-not-used-in-production
+      ENCRYPTION_KEY: CP1IS-7KJ4ioJsjeu11G0dKnNdV6I_cspMuya9JHc2s=
 
     steps:
       - uses: actions/checkout@v4

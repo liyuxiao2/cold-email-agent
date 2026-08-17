@@ -30,17 +30,15 @@ async def test_health_check():
 
 
 @pytest.mark.asyncio
-async def test_pipeline_stats():
+async def test_pipeline_stats(user_client):
     mock_db = AsyncMock()
     mock_result = MagicMock()
     mock_result.all.return_value = [("drafted", 5), ("found", 10), ("sent", 2)]
     mock_db.execute.return_value = mock_result
     app.dependency_overrides[get_async_session] = lambda: mock_db
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-        response = await ac.get("/api/pipeline/stats")
+    response = await user_client.get("/api/pipeline/stats")
 
-    app.dependency_overrides.clear()
     assert response.status_code == 200
     data = response.json()
     assert data["drafted"] == 5
@@ -50,7 +48,7 @@ async def test_pipeline_stats():
 
 
 @pytest.mark.asyncio
-async def test_list_leads():
+async def test_list_leads(user_client):
     mock_db = AsyncMock()
 
     mock_lead = MagicMock(spec=Lead)
@@ -80,10 +78,8 @@ async def test_list_leads():
     mock_db.execute.side_effect = [mock_result, mock_count_result]
     app.dependency_overrides[get_async_session] = lambda: mock_db
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-        response = await ac.get("/api/leads?limit=10")
+    response = await user_client.get("/api/leads?limit=10")
 
-    app.dependency_overrides.clear()
     assert response.status_code == 200
     data = response.json()
     assert data["total"] == 1
@@ -92,11 +88,10 @@ async def test_list_leads():
 
 
 @pytest.mark.asyncio
-async def test_trigger_discovery():
+async def test_trigger_discovery(admin_client):
     with patch("cold_email.workers.discovery.discovery.discovery_task.delay") as mock_delay:
         mock_delay.return_value.id = "mock-task-id-123"
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-            response = await ac.post("/api/pipeline/discovery")
+        response = await admin_client.post("/api/pipeline/discovery")
 
     assert response.status_code == 200
     data = response.json()
@@ -105,11 +100,10 @@ async def test_trigger_discovery():
 
 
 @pytest.mark.asyncio
-async def test_trigger_drafting():
+async def test_trigger_drafting(admin_client):
     with patch("cold_email.workers.drafting.drafting.drafting_task.delay") as mock_delay:
         mock_delay.return_value.id = "mock-draft-task-456"
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-            response = await ac.post("/api/pipeline/drafting")
+        response = await admin_client.post("/api/pipeline/drafting")
 
     assert response.status_code == 200
     data = response.json()
@@ -118,9 +112,11 @@ async def test_trigger_drafting():
 
 
 @pytest.mark.asyncio
-async def test_trigger_research_requeues_found_leads():
+async def test_trigger_research_requeues_found_leads(admin_client):
     """Requeues only 'found' (orphaned, never-researched) leads. Terminally
-    'failed' leads are recovered separately via the dead-letter queue."""
+    'failed' leads are recovered separately via the dead-letter queue.
+
+    Uses admin_client because /api/pipeline/research is admin-only."""
     found_lead = MagicMock(spec=Lead)
     found_lead.id = "00000000-0000-0000-0000-000000000001"
     found_lead.status = "found"
@@ -135,10 +131,8 @@ async def test_trigger_research_requeues_found_leads():
     app.dependency_overrides[get_async_session] = lambda: mock_db
 
     with patch("cold_email.workers.research.research.research_task.delay") as mock_delay:
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-            response = await ac.post("/api/pipeline/research")
+        response = await admin_client.post("/api/pipeline/research")
 
-    app.dependency_overrides.clear()
     assert response.status_code == 200
     data = response.json()
     assert data["success"] is True
@@ -147,7 +141,7 @@ async def test_trigger_research_requeues_found_leads():
 
 
 @pytest.mark.asyncio
-async def test_approve_lead():
+async def test_approve_lead(user_client):
     mock_db = AsyncMock()
     mock_lead = MagicMock(spec=Lead)
     mock_lead.id = "00000000-0000-0000-0000-000000000001"
@@ -157,10 +151,8 @@ async def test_approve_lead():
 
     with patch("cold_email.workers.logistics.logistics.logistics_task.delay") as mock_delay:
         mock_delay.return_value.id = "logistics-task-789"
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-            response = await ac.post(f"/api/leads/{mock_lead.id}/approve")
+        response = await user_client.post(f"/api/leads/{mock_lead.id}/approve")
 
-    app.dependency_overrides.clear()
     assert response.status_code == 200
     assert response.json()["success"] is True
     assert response.json()["status"] == "approved"
@@ -168,7 +160,7 @@ async def test_approve_lead():
 
 
 @pytest.mark.asyncio
-async def test_draft_review_queue_returns_newest_draft():
+async def test_draft_review_queue_returns_newest_draft(user_client):
     """After a regenerate, the review queue must show the NEWEST draft, even when
     every draft row shares version=1 (version is vestigial). Selection is by
     created_at, consistent with the pending_sends view used for sending."""
@@ -207,10 +199,8 @@ async def test_draft_review_queue_returns_newest_draft():
     mock_db.execute.return_value = result
     app.dependency_overrides[get_async_session] = lambda: mock_db
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-        response = await ac.get("/api/leads/drafts")
+    response = await user_client.get("/api/leads/drafts")
 
-    app.dependency_overrides.clear()
     assert response.status_code == 200
     draft = response.json()[0]["draft"]
     assert draft["gmail_draft_id"] == "gmail-new"

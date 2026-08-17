@@ -6,7 +6,8 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from cold_email.database import Lead, get_async_session
+from cold_email.auth.deps import get_current_user
+from cold_email.database import Lead, User, get_async_session
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +19,10 @@ class RejectRequest(BaseModel):
 
 
 @router.get("/drafts")
-async def get_draft_review_queue(session: AsyncSession = Depends(get_async_session)):
+async def get_draft_review_queue(
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(get_current_user),
+):
     """Return all leads currently with status='drafted', including draft and research."""
     stmt = (
         select(Lead)
@@ -31,9 +35,6 @@ async def get_draft_review_queue(session: AsyncSession = Depends(get_async_sessi
 
     items = []
     for lead in leads:
-        # Newest draft by created_at — consistent with the pending_sends view.
-        # (version is vestigial: commit_draft leaves it =1, so keying on version
-        # returns a stale row after a regenerate.)
         latest_draft = max(lead.drafts, key=lambda d: d.created_at, default=None)
         latest_research = (
             max(lead.research, key=lambda r: r.created_at, default=None) if lead.research else None
@@ -86,6 +87,7 @@ async def list_leads(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(get_current_user),
 ):
     """List leads with pagination, filtering, and search."""
     stmt = select(Lead).options(selectinload(Lead.drafts), selectinload(Lead.research))
@@ -113,9 +115,6 @@ async def list_leads(
 
     items = []
     for lead in leads:
-        # Newest draft by created_at — consistent with the pending_sends view.
-        # (version is vestigial: commit_draft leaves it =1, so keying on version
-        # returns a stale row after a regenerate.)
         latest_draft = max(lead.drafts, key=lambda d: d.created_at, default=None)
         latest_research = (
             max(lead.research, key=lambda r: r.created_at, default=None) if lead.research else None
@@ -164,6 +163,7 @@ async def list_leads(
 async def approve_lead_api(
     lead_id: str,
     session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(get_current_user),
 ):
     """Approve a drafted lead and dispatch logistics task."""
     lead = await session.get(Lead, lead_id)
@@ -195,6 +195,7 @@ async def reject_lead_api(
     lead_id: str,
     payload: RejectRequest | None = None,
     session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(get_current_user),
 ):
     """Reject a drafted lead with optional notes."""
     lead = await session.get(Lead, lead_id)
@@ -217,6 +218,7 @@ async def reject_lead_api(
 async def regenerate_lead_api(
     lead_id: str,
     session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(get_current_user),
 ):
     """Reset lead to researched and trigger drafting sweep."""
     lead = await session.get(Lead, lead_id)

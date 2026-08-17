@@ -1,16 +1,48 @@
 import contextlib
 import uuid
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text, create_engine, func
+from sqlalchemy import (
+    Column,
+    DateTime,
+    ForeignKey,
+    Integer,
+    LargeBinary,
+    String,
+    Text,
+    create_engine,
+    func,
+)
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, relationship, sessionmaker
 
 from cold_email.config import settings
+from cold_email.constants import ROLE_ADMIN, ROLE_USER
 
 
 class Base(DeclarativeBase):
     pass
+
+
+class User(Base):
+    """An authenticated person."""
+
+    __tablename__ = "users"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    google_sub = Column(String, unique=True, index=True)
+    email = Column(String, unique=True, nullable=False)
+    name = Column(String)
+    picture_url = Column(String)
+    role = Column(String, nullable=False, default=ROLE_USER)
+    gmail_refresh_token_enc = Column(LargeBinary)
+    gmail_sender_email = Column(String)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    @property
+    def is_admin(self) -> bool:
+        return self.role == ROLE_ADMIN
 
 
 class Lead(Base):
@@ -63,12 +95,7 @@ class Draft(Base):
 
 
 class DeadLetter(Base):
-    """Dead-letter queue: one row per task that terminally failed.
-
-    Written by handle_terminal_failure (the single failure choke point) so every
-    permanently-failed lead lands here with enough context to be re-dispatched.
-    `stage` maps the row back to the worker that should retry it.
-    """
+    """Dead-letter queue: one row per task that terminally failed."""
 
     __tablename__ = "dead_letter"
 
