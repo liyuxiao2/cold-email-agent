@@ -130,12 +130,12 @@ def suggest_profile(resume_text: str) -> dict      # generate_json(ResumeProfile
 ```python
 class ResumeProfile(BaseModel):
     name: str
-    intro: str                      # one first-person sentence
+    intro: str  # one first-person sentence
     linkedin: str | None
     github: str | None
     website: str | None
-    experience_pool: list[str]      # 4-8 "Label: achievement" strings
-    company_links: dict[str, str]   # {"Wealthsimple": "https://..."}
+    experience_pool: list[str]  # 4-8 "Label: achievement" strings
+    company_links: dict[str, str]  # {"Wealthsimple": "https://..."}
 ```
 
 `experience_pool` uses the same `"Label: achievement"` shape the existing

@@ -85,8 +85,11 @@ async def company(async_session):
 
 async def _contact(session, company, email, *, confidence=50, eligible=True, is_founder=False):
     contact = CompanyContact(
-        company_id=company.id, email=email, confidence=confidence,
-        eligible=eligible, is_founder=is_founder,
+        company_id=company.id,
+        email=email,
+        confidence=confidence,
+        eligible=eligible,
+        is_founder=is_founder,
     )
     session.add(contact)
     await session.commit()
@@ -138,9 +141,7 @@ async def test_is_founder_breaks_a_confidence_tie(async_session, company):
 
 
 @pytest.mark.asyncio
-async def test_founder_preference_never_outranks_spreading(
-    async_session, company, admin_user_id
-):
+async def test_founder_preference_never_outranks_spreading(async_session, company, admin_user_id):
     """is_founder sits BELOW use_count. Above it, volume re-concentrates on the
     exact address contact spreading exists to protect."""
     founder = await _contact(async_session, company, "f@acme.com", confidence=95, is_founder=True)
@@ -215,8 +216,7 @@ async def extra_users(async_session):
     from cold_email.database import ROLE_USER, User
 
     users = [
-        User(email=f"u{i}@example.com", google_sub=f"sub-u{i}", role=ROLE_USER)
-        for i in range(5)
+        User(email=f"u{i}@example.com", google_sub=f"sub-u{i}", role=ROLE_USER) for i in range(5)
     ]
     async_session.add_all(users)
     await async_session.commit()
@@ -383,7 +383,7 @@ def test_tokens_refill_at_the_configured_rate():
         acquire("test", rate=10.0, burst=5, timeout=0)
     assert acquire("test", rate=10.0, burst=5, timeout=0) is False
 
-    time.sleep(0.25)   # 10/s → ~2 tokens
+    time.sleep(0.25)  # 10/s → ~2 tokens
     assert acquire("test", rate=10.0, burst=5, timeout=0) is True
 
 
@@ -420,9 +420,7 @@ def test_fails_open_when_redis_is_unreachable(monkeypatch):
     def boom(*args, **kwargs):
         raise redis.RedisError("connection refused")
 
-    monkeypatch.setattr(
-        "cold_email.workers.shared.rate_limit._eval_bucket", boom
-    )
+    monkeypatch.setattr("cold_email.workers.shared.rate_limit._eval_bucket", boom)
     assert acquire("test", rate=1.0, burst=1, timeout=0) is True
 
 
@@ -483,7 +481,7 @@ from cold_email.config import settings
 logger = logging.getLogger(__name__)
 
 # Conservative defaults sized for a free tier. Override per model at the call site.
-MODEL_RATE_DEFAULT = 0.5    # tokens per second
+MODEL_RATE_DEFAULT = 0.5  # tokens per second
 MODEL_BURST_DEFAULT = 5
 
 _POLL_INTERVAL = 0.05
@@ -670,7 +668,9 @@ def test_platform_calls_acquire_a_token(monkeypatch):
     from cold_email.workers.shared.llm import LlmCredentials, generate_json
 
     generate_json(
-        system="s", prompt="p", schema=_Schema,
+        system="s",
+        prompt="p",
+        schema=_Schema,
         credentials=LlmCredentials(api_key="platform", provider=None, is_byok=False),
     )
     assert len(acquired) == 1
@@ -688,7 +688,9 @@ def test_byok_calls_bypass_the_bucket(monkeypatch):
     from cold_email.workers.shared.llm import LlmCredentials, generate_json
 
     generate_json(
-        system="s", prompt="p", schema=_Schema,
+        system="s",
+        prompt="p",
+        schema=_Schema,
         credentials=LlmCredentials(api_key="gsk_theirs", provider="groq", is_byok=True),
     )
     assert acquired == []
@@ -771,9 +773,7 @@ def generate_json(system: str, prompt: str, schema, credentials=None) -> str:
 
     for model in chain:
         # BYOK bypasses the bucket: it models OUR shared quota, not theirs.
-        if not credentials.is_byok and not acquire(
-            f"llm:{model}", timeout=BUCKET_WAIT_SECONDS
-        ):
+        if not credentials.is_byok and not acquire(f"llm:{model}", timeout=BUCKET_WAIT_SECONDS):
             # Treated exactly like a 429 so the existing skip logic is reused
             # rather than growing a parallel notion of "model unavailable".
             logger.info(f"Token bucket exhausted for {model}; skipping to the next model")
@@ -842,12 +842,22 @@ async def test_usage_counts_only_this_period(async_session, admin_user, company_
     from cold_email.database import Outreach
 
     now = datetime.now(UTC)
-    async_session.add_all([
-        Outreach(user_id=admin_user.id, company_id=(await company_factory()).id, status="sent",
-                 created_at=now),
-        Outreach(user_id=admin_user.id, company_id=(await company_factory()).id, status="sent",
-                 created_at=period_start(now) - timedelta(days=1)),
-    ])
+    async_session.add_all(
+        [
+            Outreach(
+                user_id=admin_user.id,
+                company_id=(await company_factory()).id,
+                status="sent",
+                created_at=now,
+            ),
+            Outreach(
+                user_id=admin_user.id,
+                company_id=(await company_factory()).id,
+                status="sent",
+                created_at=period_start(now) - timedelta(days=1),
+            ),
+        ]
+    )
     await async_session.commit()
 
     used, _ = await usage(async_session, admin_user)
@@ -855,8 +865,9 @@ async def test_usage_counts_only_this_period(async_session, admin_user, company_
 
 
 @pytest.mark.asyncio
-async def test_usage_counts_only_the_caller(async_session, admin_user, extra_users,
-                                            company_factory):
+async def test_usage_counts_only_the_caller(
+    async_session, admin_user, extra_users, company_factory
+):
     from cold_email.database import Outreach
 
     async_session.add(
@@ -874,10 +885,16 @@ async def test_usage_counts_creations_not_sends(async_session, admin_user, compa
     and approves 3 has spent 100 units of the rationed thing."""
     from cold_email.database import Outreach
 
-    async_session.add_all([
-        Outreach(user_id=admin_user.id, company_id=(await company_factory()).id, status="queued"),
-        Outreach(user_id=admin_user.id, company_id=(await company_factory()).id, status="rejected"),
-    ])
+    async_session.add_all(
+        [
+            Outreach(
+                user_id=admin_user.id, company_id=(await company_factory()).id, status="queued"
+            ),
+            Outreach(
+                user_id=admin_user.id, company_id=(await company_factory()).id, status="rejected"
+            ),
+        ]
+    )
     await async_session.commit()
 
     used, _ = await usage(async_session, admin_user)
@@ -983,7 +1000,7 @@ async def check(session: AsyncSession, user: User, requested: int) -> int:
     should get 12 drafts and a clear note, not a 400 and nothing.
     """
     if user.llm_api_key_enc:
-        return requested   # BYOK: their key, their limits
+        return requested  # BYOK: their key, their limits
 
     used, limit = await usage(session, user)
     return max(0, min(requested, limit - used))
@@ -1092,7 +1109,8 @@ async def test_detail_includes_contact_summaries_without_addresses(user_client, 
 @pytest.mark.asyncio
 async def test_contact_count_reflects_availability(user_client, pool_fixture):
     item = next(
-        c for c in (await user_client.get("/api/companies")).json()["items"]
+        c
+        for c in (await user_client.get("/api/companies")).json()["items"]
         if c["company_name"] == "ResearchedCo"
     )
     assert item["contact_count"] == 2
@@ -1217,11 +1235,7 @@ async def list_pool(
     if has_founder_contact:
         sql += " AND avail.has_founder"
 
-    total = (
-        await session.execute(
-            text(f"SELECT COUNT(*) FROM ({sql}) sub"), params
-        )
-    ).scalar_one()
+    total = (await session.execute(text(f"SELECT COUNT(*) FROM ({sql}) sub"), params)).scalar_one()
 
     sql += " ORDER BY c.created_at DESC LIMIT :limit OFFSET :offset"
     params |= {"limit": limit, "offset": offset}
@@ -1259,8 +1273,9 @@ async def get_company(
 ):
     """One company with full research and contact SUMMARIES — no addresses."""
     row = (
-        await session.execute(
-            text("""
+        (
+            await session.execute(
+                text("""
             SELECT c.*, r.hook, r.tech_stack, r.recent_news
             FROM companies c
             LEFT JOIN LATERAL (
@@ -1269,25 +1284,32 @@ async def get_company(
             ) r ON TRUE
             WHERE c.id = :id AND c.research_status = 'researched'
             """),
-            {"id": company_id},
+                {"id": company_id},
+            )
         )
-    ).mappings().one_or_none()
+        .mappings()
+        .one_or_none()
+    )
 
     if row is None:
         raise HTTPException(status_code=404, detail="Company not found")
 
     contacts = (
-        await session.execute(
-            text("""
+        (
+            await session.execute(
+                text("""
             SELECT ct.first_name, ct.position, ct.is_founder
             FROM company_contacts ct
             JOIN available_contacts ac ON ac.contact_id = ct.id
             WHERE ct.company_id = :id AND ac.use_count < :cap
             ORDER BY ac.use_count, ct.confidence DESC
             """),
-            {"id": company_id, "cap": settings.contact_cap},
+                {"id": company_id, "cap": settings.contact_cap},
+            )
         )
-    ).mappings().all()
+        .mappings()
+        .all()
+    )
 
     return {
         "id": str(row["id"]),
@@ -1347,7 +1369,9 @@ import pytest
 
 
 @pytest.mark.asyncio
-async def test_creates_queued_rows_with_a_selected_contact(user_client, pool_fixture, async_session):
+async def test_creates_queued_rows_with_a_selected_contact(
+    user_client, pool_fixture, async_session
+):
     ids = [c["id"] for c in (await user_client.get("/api/companies")).json()["items"]]
     body = (await user_client.post("/api/outreach", json={"company_ids": ids[:1]})).json()
 
@@ -1398,9 +1422,7 @@ async def test_unresearched_companies_are_skipped(user_client, pool_fixture, asy
         await async_session.execute(select(Company).where(Company.company_name == "FoundCo"))
     ).scalar_one()
 
-    body = (
-        await user_client.post("/api/outreach", json={"company_ids": [str(found.id)]})
-    ).json()
+    body = (await user_client.post("/api/outreach", json={"company_ids": [str(found.id)]})).json()
     assert body["skipped"][0]["reason"] == "not_researched"
 
 
@@ -1466,9 +1488,7 @@ async def test_invalid_llm_key_is_422_and_stores_nothing(user_client, monkeypatc
     monkeypatch.setattr(
         "cold_email.api.routes.outreach.validate_llm_key", lambda provider, key: False
     )
-    response = await user_client.put(
-        "/api/llm-key", json={"provider": "groq", "api_key": "bad"}
-    )
+    response = await user_client.put("/api/llm-key", json={"provider": "groq", "api_key": "bad"})
     assert response.status_code == 422
 
     from sqlalchemy import select
@@ -1540,16 +1560,20 @@ async def create_outreach(
             continue
 
         outreach = Outreach(
-            user_id=user.id, company_id=company.id, contact_id=contact_id,
+            user_id=user.id,
+            company_id=company.id,
+            contact_id=contact_id,
             status=OUTREACH_QUEUED,
         )
         session.add(outreach)
         await session.flush()
-        created.append({
-            "outreach_id": str(outreach.id),
-            "company_id": company_id,
-            "contact_id": str(contact_id),
-        })
+        created.append(
+            {
+                "outreach_id": str(outreach.id),
+                "company_id": company_id,
+                "contact_id": str(contact_id),
+            }
+        )
 
     await session.commit()
 
@@ -1660,14 +1684,22 @@ async def test_recovery_sweep_only_picks_up_stale_rows(
 
 @pytest.mark.asyncio
 async def test_byok_users_credentials_reach_the_llm(
-    async_session, sync_session_for, queued_outreach, admin_profile,
-    admin_gmail_connected, byok_admin, monkeypatch
+    async_session,
+    sync_session_for,
+    queued_outreach,
+    admin_profile,
+    admin_gmail_connected,
+    byok_admin,
+    monkeypatch,
 ):
     captured = {}
     monkeypatch.setattr(
         "cold_email.workers.drafting.helpers.generation.generate_json",
-        lambda **kw: captured.update(kw) or '{"subject":"s","company_interest":"c",'
-        '"admiration_detail":"a","intro":"i","tailored_bullets":["A: b"]}',
+        lambda **kw: (
+            captured.update(kw)
+            or '{"subject":"s","company_interest":"c",'
+            '"admiration_detail":"a","intro":"i","tailored_bullets":["A: b"]}'
+        ),
     )
 
     from cold_email.workers.drafting.drafting import drafting_task
@@ -1728,10 +1760,14 @@ def fetch_pending_drafts(user_id: str) -> list[PendingDraft]:
     user's row would create it in the wrong mailbox with the wrong résumé.
     """
     with get_sync_session() as session:
-        rows = session.execute(
-            text("SELECT * FROM pending_drafts WHERE user_id = :user_id"),
-            {"user_id": user_id},
-        ).mappings().all()
+        rows = (
+            session.execute(
+                text("SELECT * FROM pending_drafts WHERE user_id = :user_id"),
+                {"user_id": user_id},
+            )
+            .mappings()
+            .all()
+        )
     return [PendingDraft(**row) for row in rows]
 ```
 
@@ -1751,14 +1787,18 @@ def drafting_recovery_task() -> dict:
     """
     cutoff_minutes = 30
     with get_sync_session() as session:
-        user_ids = session.execute(
-            text("""
+        user_ids = (
+            session.execute(
+                text("""
                 SELECT DISTINCT user_id FROM outreach
                 WHERE status = 'queued'
                   AND created_at < now() - make_interval(mins => :mins)
             """),
-            {"mins": cutoff_minutes},
-        ).scalars().all()
+                {"mins": cutoff_minutes},
+            )
+            .scalars()
+            .all()
+        )
 
     for user_id in user_ids:
         drafting_task.delay(str(user_id))

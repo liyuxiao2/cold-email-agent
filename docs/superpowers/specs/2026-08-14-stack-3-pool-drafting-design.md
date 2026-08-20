@@ -16,7 +16,8 @@ founders, and makes concurrent multi-user LLM access actually work.
 `cold_email/contact_selection.py`:
 
 ```python
-CONTACT_CAP_DEFAULT = 3          # settings.contact_cap
+CONTACT_CAP_DEFAULT = 3  # settings.contact_cap
+
 
 def select_contact(session, company_id, cap) -> UUID | None:
     """Least-globally-contacted eligible contact under the cap.

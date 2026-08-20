@@ -536,7 +536,7 @@ Append to `tests/test_migration.py`:
         ("ResearchCo", "researched"),
         ("DraftCo", "researched"),
         ("SentCo", "researched"),
-        ("NoEmailCo", "failed"),       # failed with no email = research failed
+        ("NoEmailCo", "failed"),  # failed with no email = research failed
         ("DraftFailCo", "researched"),  # failed WITH an email = drafting failed
     ],
 )
@@ -581,7 +581,7 @@ async def test_founder_email_becomes_an_eligible_founder_contact(legacy_fixture,
     assert row.last_name == "Reed"
     assert row.is_founder is True
     assert row.eligible is True
-    assert row.confidence == 25   # sentinel: Hunter's real score was never stored
+    assert row.confidence == 25  # sentinel: Hunter's real score was never stored
 
 
 @pytest.mark.asyncio
@@ -600,9 +600,7 @@ async def test_single_word_founder_name_gets_no_fabricated_surname(legacy_fixtur
 
 
 @pytest.mark.asyncio
-async def test_lead_without_an_email_gets_no_contact_and_no_outreach(
-    legacy_fixture, async_session
-):
+async def test_lead_without_an_email_gets_no_contact_and_no_outreach(legacy_fixture, async_session):
     await _run_migration(async_session)
     counts = (
         await async_session.execute(
@@ -642,8 +640,8 @@ async def test_outreach_status_carried_over(legacy_fixture, async_session, compa
 async def test_outreach_is_owned_by_the_admin(legacy_fixture, async_session, admin_user_id):
     await _run_migration(async_session)
     owners = (
-        await async_session.execute(text("SELECT DISTINCT user_id FROM outreach"))
-    ).scalars().all()
+        (await async_session.execute(text("SELECT DISTINCT user_id FROM outreach"))).scalars().all()
+    )
     assert owners == [admin_user_id]
 
 
@@ -904,16 +902,12 @@ class Outreach(Base):
     __tablename__ = "outreach"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(
-        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
-    )
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     company_id = Column(
         UUID(as_uuid=True), ForeignKey("companies.id", ondelete="CASCADE"), nullable=False
     )
     # SET NULL, not CASCADE — see the model docstring in CompanyContact.
-    contact_id = Column(
-        UUID(as_uuid=True), ForeignKey("company_contacts.id", ondelete="SET NULL")
-    )
+    contact_id = Column(UUID(as_uuid=True), ForeignKey("company_contacts.id", ondelete="SET NULL"))
     status = Column(String, nullable=False, default=OUTREACH_QUEUED, index=True)
     scheduled_send_at = Column(DateTime(timezone=True))  # NULL = send immediately
     error_msg = Column(Text)
@@ -1053,8 +1047,10 @@ async def test_fail_company_marks_and_dead_letters(async_session, monkeypatch, s
     await async_session.commit()
 
     fail_company(
-        str(company.id), "No eligible contacts found (Hunter)",
-        stage="research", task_name="research_task",
+        str(company.id),
+        "No eligible contacts found (Hunter)",
+        stage="research",
+        task_name="research_task",
     )
 
     await async_session.refresh(company)
@@ -1067,9 +1063,7 @@ async def test_fail_company_marks_and_dead_letters(async_session, monkeypatch, s
 
 
 @pytest.mark.asyncio
-async def test_fail_outreach_marks_and_dead_letters(
-    async_session, admin_user_id, sync_session_for
-):
+async def test_fail_outreach_marks_and_dead_letters(async_session, admin_user_id, sync_session_for):
     from cold_email.workers.shared.errors import fail_outreach
 
     company = Company(company_name="Acme")
@@ -1096,8 +1090,13 @@ def test_pending_draft_carries_contact_fields():
     from cold_email.workers.shared.views import PendingDraft
 
     fields = PendingDraft.__dataclass_fields__
-    for name in ("outreach_id", "user_id", "contact_email", "contact_first_name",
-                 "contact_position"):
+    for name in (
+        "outreach_id",
+        "user_id",
+        "contact_email",
+        "contact_first_name",
+        "contact_position",
+    ):
         assert name in fields
     assert "lead_id" not in fields
     assert "founder_email" not in fields
@@ -1300,18 +1299,14 @@ logger = logging.getLogger(__name__)
 def fail_company(company_id: str, reason: str, *, stage: str, task_name: str) -> None:
     """Terminal failure at the GLOBAL level: this company is not emailable."""
     update_company_research_status(company_id, RESEARCH_FAILED, error_msg=reason)
-    record_dead_letter(
-        company_id=company_id, task_name=task_name, stage=stage, error_msg=reason
-    )
+    record_dead_letter(company_id=company_id, task_name=task_name, stage=stage, error_msg=reason)
     logger.warning(f"Company {company_id} failed and dead-lettered ({stage}): {reason}")
 
 
 def fail_outreach(outreach_id: str, reason: str, *, stage: str, task_name: str) -> None:
     """Terminal failure at the PER-USER level: this user's outreach broke."""
     update_outreach_status(outreach_id, OUTREACH_FAILED, error_msg=reason)
-    record_dead_letter(
-        outreach_id=outreach_id, task_name=task_name, stage=stage, error_msg=reason
-    )
+    record_dead_letter(outreach_id=outreach_id, task_name=task_name, stage=stage, error_msg=reason)
     logger.warning(f"Outreach {outreach_id} failed and dead-lettered ({stage}): {reason}")
 
 
@@ -1386,6 +1381,7 @@ def _contact(**overrides) -> HunterContact:
 
 # ---------------------------------------------------------------- eligibility
 
+
 def test_generic_addresses_are_ineligible():
     """info@ and support@ land in a shared queue and reply poorly."""
     [c] = classify_contacts([_contact(email="info@acme.com", is_generic=True)], "Ann Reed")
@@ -1420,6 +1416,7 @@ def test_missing_position_is_ineligible_unless_founder():
 
 # ------------------------------------------------------------------ is_founder
 
+
 def test_is_founder_by_name_match():
     [c] = classify_contacts([_contact(position="Engineer")], "Ann Reed")
     assert c.is_founder is True
@@ -1444,6 +1441,7 @@ def test_unusable_founder_name_does_not_match_anyone():
 
 # ------------------------------------------------------------------ fail-fast
 
+
 def test_has_eligible_contact_false_for_all_generic():
     contacts = classify_contacts(
         [
@@ -1464,6 +1462,7 @@ def test_has_eligible_contact_true_when_one_qualifies():
 
 
 # ------------------------------------------------------------- Hunter mapping
+
 
 def test_find_contacts_maps_the_hunter_payload(monkeypatch):
     payload = {
@@ -1513,9 +1512,7 @@ def test_find_contacts_returns_empty_on_network_error(monkeypatch):
     def boom(*a, **k):
         raise requests.RequestException("timeout")
 
-    monkeypatch.setattr(
-        "cold_email.workers.research.helpers.contact_finder.requests.get", boom
-    )
+    monkeypatch.setattr("cold_email.workers.research.helpers.contact_finder.requests.get", boom)
     assert find_contacts("acme.com") == []
 
 
@@ -1524,6 +1521,7 @@ def test_find_contacts_without_a_domain_makes_no_call():
 
 
 # ------------------------------------- carried over from test_email_finder.py
+
 
 @pytest.mark.parametrize(
     "url,expected",
@@ -1645,9 +1643,26 @@ logger = logging.getLogger(__name__)
 # Tokens that signal the LLM returned a non-name (title, hedge, or placeholder)
 # rather than a person. Matched case-insensitively against whole words.
 _NON_NAME_TOKENS = {
-    "not", "founder", "founders", "ceo", "cto", "coo", "cofounder", "co-founder",
-    "the", "team", "board", "director", "directors", "unknown", "none", "na",
-    "n/a", "unclear", "unnamed", "and",
+    "not",
+    "founder",
+    "founders",
+    "ceo",
+    "cto",
+    "coo",
+    "cofounder",
+    "co-founder",
+    "the",
+    "team",
+    "board",
+    "director",
+    "directors",
+    "unknown",
+    "none",
+    "na",
+    "n/a",
+    "unclear",
+    "unnamed",
+    "and",
 }
 _NAME_WORD = re.compile(r"^[A-Za-z][A-Za-z.'-]*$")
 
@@ -1880,18 +1895,20 @@ async def test_saves_every_contact_including_ineligible(
     from sqlalchemy import select
 
     contacts = (
-        await async_session.execute(
-            select(CompanyContact).where(CompanyContact.company_id == company.id)
+        (
+            await async_session.execute(
+                select(CompanyContact).where(CompanyContact.company_id == company.id)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     assert len(contacts) == 2
     assert {c.eligible for c in contacts} == {True, False}
 
 
 @pytest.mark.asyncio
-async def test_no_eligible_contact_fails_the_company(
-    async_session, monkeypatch, sync_session_for
-):
+async def test_no_eligible_contact_fails_the_company(async_session, monkeypatch, sync_session_for):
     from cold_email.database import RESEARCH_FAILED, Company, DeadLetter
     from cold_email.workers.research.constants import ERR_NO_ELIGIBLE_CONTACTS
     from cold_email.workers.research.helpers.contact_finder import HunterContact
@@ -1902,9 +1919,7 @@ async def test_no_eligible_contact_fails_the_company(
 
     monkeypatch.setattr(
         "cold_email.workers.research.research.find_contacts",
-        lambda domain: [
-            HunterContact("info@acme.com", None, None, None, None, None, 80, True)
-        ],
+        lambda domain: [HunterContact("info@acme.com", None, None, None, None, None, 80, True)],
     )
     _stub_scrape_and_llm(monkeypatch, founder_name="Ann Reed")
 
@@ -1938,9 +1953,7 @@ async def test_contacts_are_saved_before_the_eligibility_gate(
 
     monkeypatch.setattr(
         "cold_email.workers.research.research.find_contacts",
-        lambda domain: [
-            HunterContact("info@acme.com", None, None, None, None, None, 80, True)
-        ],
+        lambda domain: [HunterContact("info@acme.com", None, None, None, None, None, 80, True)],
     )
     _stub_scrape_and_llm(monkeypatch, founder_name="Ann Reed")
 
@@ -1952,7 +1965,8 @@ async def test_contacts_are_saved_before_the_eligibility_gate(
 
     count = (
         await async_session.execute(
-            select(func.count()).select_from(CompanyContact)
+            select(func.count())
+            .select_from(CompanyContact)
             .where(CompanyContact.company_id == company.id)
         )
     ).scalar_one()
@@ -2057,8 +2071,10 @@ def save_contacts(company_id: str, contacts: list[ClassifiedContact]) -> int:
     ]
 
     with get_sync_session() as session:
-        statement = pg_insert(CompanyContact).values(rows).on_conflict_do_nothing(
-            index_elements=["company_id", "email"]
+        statement = (
+            pg_insert(CompanyContact)
+            .values(rows)
+            .on_conflict_do_nothing(index_elements=["company_id", "email"])
         )
         result = session.execute(statement)
         session.commit()
@@ -2277,9 +2293,9 @@ def test_greeting_uses_the_contact_not_the_founder(profile):
         contact_id="ct1",
         company_name="Acme",
         company_url="https://acme.com",
-        founder_name="Ann Reed",          # the founder
+        founder_name="Ann Reed",  # the founder
         contact_email="bo@acme.com",
-        contact_first_name="Bo",          # but we are emailing Bo
+        contact_first_name="Bo",  # but we are emailing Bo
         contact_position="CTO",
         raw_content="raw",
         tech_stack=["python"],
@@ -2303,14 +2319,27 @@ def test_greeting_falls_back_when_the_contact_has_no_first_name(profile):
     from cold_email.workers.shared.views import PendingDraft
 
     row = PendingDraft(
-        outreach_id="o1", user_id="u1", company_id="c1", contact_id="ct1",
-        company_name="Acme", company_url="https://acme.com", founder_name=None,
-        contact_email="team@acme.com", contact_first_name=None, contact_position="CTO",
-        raw_content="raw", tech_stack=["python"], recent_news="n", hook="h",
+        outreach_id="o1",
+        user_id="u1",
+        company_id="c1",
+        contact_id="ct1",
+        company_name="Acme",
+        company_url="https://acme.com",
+        founder_name=None,
+        contact_email="team@acme.com",
+        contact_first_name=None,
+        contact_position="CTO",
+        raw_content="raw",
+        tech_stack=["python"],
+        recent_news="n",
+        hook="h",
     )
     context = {
-        "subject": "Acme", "company_interest": "x", "admiration_detail": "y",
-        "intro": "I'm someone.", "tailored_bullets": ["A: did a thing"],
+        "subject": "Acme",
+        "company_interest": "x",
+        "admiration_detail": "y",
+        "intro": "I'm someone.",
+        "tailored_bullets": ["A: did a thing"],
     }
     assert "Hi there," in assemble_email(context, row, profile)["body"]
 
@@ -2343,8 +2372,13 @@ def test_prompt_falls_back_to_founder_when_position_is_missing():
     from cold_email.prompts.email_draft import build_email_draft_messages
 
     prompt = build_email_draft_messages(
-        recipient_name="Bo Lin", recipient_position=None, company_name="Acme",
-        tech_stack=[], recent_news="", hook="", resume_text="r",
+        recipient_name="Bo Lin",
+        recipient_position=None,
+        company_name="Acme",
+        tech_stack=[],
+        recent_news="",
+        hook="",
+        resume_text="r",
     )
     assert "Founder" in prompt
 ```
@@ -2490,9 +2524,7 @@ async def test_bridge_skips_companies_without_an_eligible_contact(
     company = Company(company_name="Acme", research_status=RESEARCH_RESEARCHED)
     async_session.add(company)
     await async_session.commit()
-    async_session.add(
-        CompanyContact(company_id=company.id, email="info@acme.com", eligible=False)
-    )
+    async_session.add(CompanyContact(company_id=company.id, email="info@acme.com", eligible=False))
     await async_session.commit()
 
     assert bridge_queue_admin_outreach() == 0
@@ -2528,10 +2560,16 @@ async def test_bridge_picks_the_highest_confidence_contact(
     company = Company(company_name="Acme", research_status=RESEARCH_RESEARCHED)
     async_session.add(company)
     await async_session.commit()
-    async_session.add_all([
-        CompanyContact(company_id=company.id, email="low@acme.com", eligible=True, confidence=30),
-        CompanyContact(company_id=company.id, email="high@acme.com", eligible=True, confidence=95),
-    ])
+    async_session.add_all(
+        [
+            CompanyContact(
+                company_id=company.id, email="low@acme.com", eligible=True, confidence=30
+            ),
+            CompanyContact(
+                company_id=company.id, email="high@acme.com", eligible=True, confidence=95
+            ),
+        ]
+    )
     await async_session.commit()
 
     bridge_queue_admin_outreach()
@@ -2553,6 +2591,7 @@ async def test_empty_model_output_fails_only_that_outreach_row(
 ):
     """One bad row must not abort the sweep."""
     from cold_email.database import OUTREACH_FAILED, DeadLetter
+
     ...  # arrange two queued rows, stub draft_email to return {} for the first
 
     from sqlalchemy import select
@@ -2740,14 +2779,18 @@ In `tests/test_logistics.py`, replace `lead_id` with `outreach_id` and
 async def test_no_draft_to_send_fails_the_outreach_row(
     async_session, admin_user_id, sync_session_for
 ):
-    from cold_email.database import OUTREACH_APPROVED, OUTREACH_FAILED, Company, DeadLetter, Outreach
+    from cold_email.database import (
+        OUTREACH_APPROVED,
+        OUTREACH_FAILED,
+        Company,
+        DeadLetter,
+        Outreach,
+    )
 
     company = Company(company_name="Acme")
     async_session.add(company)
     await async_session.commit()
-    outreach = Outreach(
-        user_id=admin_user_id, company_id=company.id, status=OUTREACH_APPROVED
-    )
+    outreach = Outreach(user_id=admin_user_id, company_id=company.id, status=OUTREACH_APPROVED)
     async_session.add(outreach)
     await async_session.commit()
 
@@ -2834,7 +2877,7 @@ async def test_cannot_mutate_another_users_outreach(
     assert response.status_code == 404
 
     await async_session.refresh(other_user_outreach)
-    assert other_user_outreach.status == "drafted"   # unchanged
+    assert other_user_outreach.status == "drafted"  # unchanged
 
 
 @pytest.mark.asyncio

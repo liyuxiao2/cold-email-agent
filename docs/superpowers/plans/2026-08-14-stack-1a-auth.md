@@ -111,17 +111,17 @@ Expected: FAIL — `test_cors_origins_is_not_wildcard` fails (currently `["*"]`)
 In `cold_email/config.py`, inside `class Settings`, replace the existing `cors_origins` line and add the new block:
 
 ```python
-    # --- Auth (Stack 1a) ---
-    session_secret: str = ""       # HS256 signing key for the session JWT
-    encryption_key: str = ""       # Fernet key, 44-char urlsafe base64
-    google_redirect_uri: str = ""  # must exactly match the Google console entry
-    frontend_url: str = "http://localhost:3000"
-    admin_email: str = ""          # seeded with role='admin' on boot
-    cookie_secure: bool = True     # False only for local http development
+# --- Auth (Stack 1a) ---
+session_secret: str = ""  # HS256 signing key for the session JWT
+encryption_key: str = ""  # Fernet key, 44-char urlsafe base64
+google_redirect_uri: str = ""  # must exactly match the Google console entry
+frontend_url: str = "http://localhost:3000"
+admin_email: str = ""  # seeded with role='admin' on boot
+cookie_secure: bool = True  # False only for local http development
 
-    # Explicit list, never ["*"]: a wildcard origin is incompatible with
-    # allow_credentials=True, which cookie sessions require.
-    cors_origins: list[str] = ["http://localhost:3000"]
+# Explicit list, never ["*"]: a wildcard origin is incompatible with
+# allow_credentials=True, which cookie sessions require.
+cors_origins: list[str] = ["http://localhost:3000"]
 ```
 
 - [ ] **Step 5: Run it to verify it passes**
@@ -746,9 +746,7 @@ def test_exchange_code_returns_identity(monkeypatch):
             },
         )
 
-    monkeypatch.setattr(
-        httpx, "post", lambda *a, **k: handler(None)
-    )
+    monkeypatch.setattr(httpx, "post", lambda *a, **k: handler(None))
 
     identity = exchange_code("auth-code")
     assert identity.sub == "1234567890"
@@ -1088,9 +1086,7 @@ async def require_admin(user: User = Depends(get_current_user)) -> User:
     the problem.
     """
     if not user.is_admin:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, detail="Admin role required"
-        )
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin role required")
     return user
 ```
 
@@ -1281,9 +1277,10 @@ async def test_me_reports_gmail_connection_state(async_session, user_client):
 async def test_logout_clears_the_cookie(user_client):
     response = await user_client.post("/api/auth/logout")
     assert response.status_code == 200
-    assert 'ce_session=""' in response.headers["set-cookie"] or "Max-Age=0" in response.headers[
-        "set-cookie"
-    ]
+    assert (
+        'ce_session=""' in response.headers["set-cookie"]
+        or "Max-Age=0" in response.headers["set-cookie"]
+    )
 ```
 
 - [ ] **Step 2: Add the test fixtures**
@@ -1469,7 +1466,7 @@ async def google_callback(
         key=SESSION_COOKIE,
         value=mint_session(user.id),
         max_age=SESSION_TTL_DAYS * 24 * 60 * 60,
-        httponly=True,          # unreadable by JavaScript, so an XSS cannot steal it
+        httponly=True,  # unreadable by JavaScript, so an XSS cannot steal it
         secure=settings.cookie_secure,
         samesite="none" if settings.cookie_secure else "lax",
         path="/",
@@ -1494,7 +1491,9 @@ async def me(user: User = Depends(get_current_user)):
 async def logout(response: Response, user: User = Depends(get_current_user)):
     """Clear the session cookie."""
     response.delete_cookie(
-        key=SESSION_COOKIE, path="/", secure=settings.cookie_secure,
+        key=SESSION_COOKIE,
+        path="/",
+        secure=settings.cookie_secure,
         samesite="none" if settings.cookie_secure else "lax",
     )
     return {"success": True}

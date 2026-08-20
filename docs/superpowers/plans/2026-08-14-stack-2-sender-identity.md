@@ -102,8 +102,11 @@ async def test_json_fields_default_to_empty(async_session, admin_user_id):
 @pytest.mark.asyncio
 async def test_stores_pdf_bytes(async_session, admin_user_id):
     profile = Profile(
-        user_id=admin_user_id, name="A", intro="i",
-        resume_pdf=b"%PDF-1.7 fake", resume_filename="cv.pdf",
+        user_id=admin_user_id,
+        name="A",
+        intro="i",
+        resume_pdf=b"%PDF-1.7 fake",
+        resume_filename="cv.pdf",
     )
     async_session.add(profile)
     await async_session.commit()
@@ -311,7 +314,7 @@ async def test_delete_clears_bytes_but_keeps_the_profile(async_session, profile)
 
     assert await get_resume(async_session, profile.user_id) is None
     await async_session.refresh(profile)
-    assert profile.name == "A"          # profile fields survive
+    assert profile.name == "A"  # profile fields survive
 
 
 @pytest.mark.asyncio
@@ -353,7 +356,7 @@ from cold_email.database import Profile
 
 logger = logging.getLogger(__name__)
 
-MAX_RESUME_BYTES = 5 * 1024 * 1024   # 5 MB
+MAX_RESUME_BYTES = 5 * 1024 * 1024  # 5 MB
 PDF_MAGIC = b"%PDF-"
 
 
@@ -377,9 +380,7 @@ def validate_resume(filename: str, data: bytes) -> None:
         raise ResumeInvalid("File is not a PDF")
 
 
-async def put_resume(
-    session: AsyncSession, user_id: uuid.UUID, filename: str, data: bytes
-) -> None:
+async def put_resume(session: AsyncSession, user_id: uuid.UUID, filename: str, data: bytes) -> None:
     """Validate then store a résumé on the user's profile row."""
     validate_resume(filename, data)
 
@@ -394,9 +395,7 @@ async def put_resume(
     logger.info(f"Stored résumé for user {user_id} ({len(data)} bytes)")
 
 
-async def get_resume(
-    session: AsyncSession, user_id: uuid.UUID
-) -> tuple[str, bytes] | None:
+async def get_resume(session: AsyncSession, user_id: uuid.UUID) -> tuple[str, bytes] | None:
     """Return (filename, bytes), or None when the user has no résumé."""
     profile = await session.get(Profile, user_id)
     if profile is None or profile.resume_pdf is None:
@@ -520,7 +519,11 @@ def test_suggested_bullets_survive_the_bullet_parser(monkeypatch):
     """_bullet_md does `label, sep, rest = bullet.partition(": ")`. Without the
     ': ' separator every bullet silently loses its bold label and its link."""
     payload = {
-        "name": "A", "intro": "i", "linkedin": None, "github": None, "website": None,
+        "name": "A",
+        "intro": "i",
+        "linkedin": None,
+        "github": None,
+        "website": None,
         "experience_pool": ["Acme: shipped a thing", "Beta: shipped another"],
         "company_links": {},
     }
@@ -790,8 +793,11 @@ async def test_effective_resume_text_falls_back_to_the_pool(async_session, admin
     from cold_email.database import Profile
 
     row = Profile(
-        user_id=admin_user_id, name="A B", intro="I am A.",
-        experience_pool=["Acme: did a thing"], resume_text=None,
+        user_id=admin_user_id,
+        name="A B",
+        intro="I am A.",
+        experience_pool=["Acme: did a thing"],
+        resume_text=None,
     )
     async_session.add(row)
     await async_session.commit()
@@ -973,9 +979,7 @@ def _stub_service(monkeypatch, sink):
         def users(self):
             return _Users()
 
-    monkeypatch.setattr(
-        "cold_email.workers.shared.gmail_client.build", lambda *a, **k: _Service()
-    )
+    monkeypatch.setattr("cold_email.workers.shared.gmail_client.build", lambda *a, **k: _Service())
 
 
 def _decode(sink) -> "email.message.Message":
@@ -993,9 +997,7 @@ def test_credentials_come_from_the_argument_not_settings(monkeypatch):
         captured.update(kwargs)
         return object()
 
-    monkeypatch.setattr(
-        "cold_email.workers.shared.gmail_client.Credentials", fake_credentials
-    )
+    monkeypatch.setattr("cold_email.workers.shared.gmail_client.Credentials", fake_credentials)
     _stub_service(monkeypatch, {})
 
     create_draft(CREDS, to="them@example.com", subject="s", body="b")
@@ -1022,9 +1024,7 @@ def test_oauth_app_credentials_remain_in_settings():
 def test_from_header_uses_the_users_sender_email(monkeypatch):
     sink = {}
     _stub_service(monkeypatch, sink)
-    monkeypatch.setattr(
-        "cold_email.workers.shared.gmail_client.Credentials", lambda **k: object()
-    )
+    monkeypatch.setattr("cold_email.workers.shared.gmail_client.Credentials", lambda **k: object())
 
     create_draft(CREDS, to="them@example.com", subject="s", body="b")
     assert _decode(sink)["From"] == "me@example.com"
@@ -1033,9 +1033,7 @@ def test_from_header_uses_the_users_sender_email(monkeypatch):
 def test_attaches_bytes_as_a_pdf(monkeypatch):
     sink = {}
     _stub_service(monkeypatch, sink)
-    monkeypatch.setattr(
-        "cold_email.workers.shared.gmail_client.Credentials", lambda **k: object()
-    )
+    monkeypatch.setattr("cold_email.workers.shared.gmail_client.Credentials", lambda **k: object())
 
     create_draft(
         CREDS,
@@ -1059,9 +1057,7 @@ def test_attaches_bytes_as_a_pdf(monkeypatch):
 def test_no_attachment_still_produces_a_multipart_alternative(monkeypatch):
     sink = {}
     _stub_service(monkeypatch, sink)
-    monkeypatch.setattr(
-        "cold_email.workers.shared.gmail_client.Credentials", lambda **k: object()
-    )
+    monkeypatch.setattr("cold_email.workers.shared.gmail_client.Credentials", lambda **k: object())
 
     create_draft(CREDS, to="t@example.com", subject="s", body="plain", html="<p>rich</p>")
     types = [p.get_content_type() for p in _decode(sink).walk()]
@@ -1072,9 +1068,7 @@ def test_no_attachment_still_produces_a_multipart_alternative(monkeypatch):
 def test_send_draft_sends_the_given_id(monkeypatch):
     sink = {}
     _stub_service(monkeypatch, sink)
-    monkeypatch.setattr(
-        "cold_email.workers.shared.gmail_client.Credentials", lambda **k: object()
-    )
+    monkeypatch.setattr("cold_email.workers.shared.gmail_client.Credentials", lambda **k: object())
 
     send_draft(CREDS, "draft-9")
     assert sink["send"] == {"id": "draft-9"}
@@ -1192,7 +1186,7 @@ def _build_service(creds: GmailCredentials):
     credentials = Credentials(
         token=None,
         refresh_token=creds.refresh_token,
-        client_id=settings.gmail_client_id,        # app-level
+        client_id=settings.gmail_client_id,  # app-level
         client_secret=settings.gmail_client_secret,  # app-level
         token_uri=GMAIL_TOKEN_URI,
         scopes=GMAIL_SCOPES,
@@ -1354,7 +1348,9 @@ async def test_upload_without_pdf_magic_bytes_is_415(user_client, seeded_profile
 
 
 @pytest.mark.asyncio
-async def test_unparseable_pdf_is_422_and_stores_nothing(user_client, seeded_profile, async_session):
+async def test_unparseable_pdf_is_422_and_stores_nothing(
+    user_client, seeded_profile, async_session
+):
     from cold_email.database import Profile
 
     response = await user_client.post(
@@ -1392,7 +1388,7 @@ async def test_llm_failure_keeps_the_uploaded_bytes(
 
     profile = await async_session.get(Profile, seeded_profile.user_id)
     await async_session.refresh(profile)
-    assert profile.resume_pdf is not None      # bytes survived
+    assert profile.resume_pdf is not None  # bytes survived
 
 
 @pytest.mark.asyncio
@@ -1408,9 +1404,13 @@ async def test_upload_returns_a_suggestion_without_committing_it(
         profile_routes,
         "suggest_profile",
         lambda text: {
-            "name": "Suggested Name", "intro": "Suggested intro.",
-            "linkedin": None, "github": None, "website": None,
-            "experience_pool": ["Acme: a thing"], "company_links": {},
+            "name": "Suggested Name",
+            "intro": "Suggested intro.",
+            "linkedin": None,
+            "github": None,
+            "website": None,
+            "experience_pool": ["Acme: a thing"],
+            "company_links": {},
         },
     )
 
@@ -1425,7 +1425,7 @@ async def test_upload_returns_a_suggestion_without_committing_it(
 
     profile = await async_session.get(Profile, seeded_profile.user_id)
     await async_session.refresh(profile)
-    assert profile.name != "Suggested Name"    # not committed
+    assert profile.name != "Suggested Name"  # not committed
 
 
 @pytest.mark.asyncio
@@ -1435,7 +1435,7 @@ async def test_download_returns_only_the_callers_own_resume(
     """Tenancy isolation: a user must never receive another user's résumé."""
     response = await user_client.get("/api/profile/resume")
     assert response.status_code == 200
-    assert response.content == VALID_PDF          # the caller's, not the other user's
+    assert response.content == VALID_PDF  # the caller's, not the other user's
 
 
 @pytest.mark.asyncio
@@ -1458,8 +1458,11 @@ async def seeded_profile(async_session, user_client):
         await async_session.execute(select(User).where(User.email == "user@example.com"))
     ).scalar_one()
     profile = Profile(
-        user_id=user.id, name="Test User", intro="I am a test.",
-        experience_pool=["Acme: a thing"], resume_pdf=b"%PDF-1.7\n" + b"x" * 2048,
+        user_id=user.id,
+        name="Test User",
+        intro="I am a test.",
+        experience_pool=["Acme: a thing"],
+        resume_pdf=b"%PDF-1.7\n" + b"x" * 2048,
         resume_filename="cv.pdf",
     )
     async_session.add(profile)
@@ -1477,8 +1480,11 @@ async def other_users_profile(async_session):
     await async_session.commit()
 
     profile = Profile(
-        user_id=other.id, name="Other", intro="Not you.",
-        resume_pdf=b"%PDF-1.7 SOMEONE ELSE", resume_filename="other.pdf",
+        user_id=other.id,
+        name="Other",
+        intro="Not you.",
+        resume_pdf=b"%PDF-1.7 SOMEONE ELSE",
+        resume_filename="other.pdf",
     )
     async_session.add(profile)
     await async_session.commit()
@@ -1583,8 +1589,15 @@ async def upsert_profile(
         profile = Profile(user_id=user.id, name=payload.name, intro=payload.intro)
         session.add(profile)
 
-    for field in ("name", "intro", "linkedin", "github", "website",
-                  "experience_pool", "company_links"):
+    for field in (
+        "name",
+        "intro",
+        "linkedin",
+        "github",
+        "website",
+        "experience_pool",
+        "company_links",
+    ):
         setattr(profile, field, getattr(payload, field))
 
     await session.commit()
@@ -1765,8 +1778,13 @@ async def test_missing_gmail_credentials_aborts_the_sweep(
 
 @pytest.mark.asyncio
 async def test_profile_without_a_pdf_drafts_with_no_attachment(
-    async_session, sync_session_for, queued_outreach, admin_profile_no_pdf,
-    admin_gmail_connected, monkeypatch, captured_drafts
+    async_session,
+    sync_session_for,
+    queued_outreach,
+    admin_profile_no_pdf,
+    admin_gmail_connected,
+    monkeypatch,
+    captured_drafts,
 ):
     from cold_email.workers.drafting.drafting import drafting_task
 
@@ -1776,8 +1794,12 @@ async def test_profile_without_a_pdf_drafts_with_no_attachment(
 
 @pytest.mark.asyncio
 async def test_resume_is_read_once_per_sweep_not_per_lead(
-    async_session, sync_session_for, three_queued_outreach, admin_profile,
-    admin_gmail_connected, monkeypatch
+    async_session,
+    sync_session_for,
+    three_queued_outreach,
+    admin_profile,
+    admin_gmail_connected,
+    monkeypatch,
 ):
     """The bytes cross the DB connection on every read. A 40-lead sweep reading
     per lead would pull ~16MB out of Cloud SQL to attach the same file."""
@@ -1899,19 +1921,21 @@ discovered mid-sweep.
 In `logistics.py`, resolve the owning user's credentials before sending:
 
 ```python
-    with get_sync_session() as session:
-        outreach = session.get(Outreach, outreach_id)
-        user = session.get(User, outreach.user_id)
-        creds = resolve_gmail_credentials(user)
+with get_sync_session() as session:
+    outreach = session.get(Outreach, outreach_id)
+    user = session.get(User, outreach.user_id)
+    creds = resolve_gmail_credentials(user)
 
-    if creds is None:
-        fail_outreach(
-            outreach_id, ERR_GMAIL_DISCONNECTED,
-            stage=LOGISTICS, task_name="cold_email.workers.logistics.logistics_task",
-        )
-        return {"status": "failed", "error": ERR_GMAIL_DISCONNECTED}
+if creds is None:
+    fail_outreach(
+        outreach_id,
+        ERR_GMAIL_DISCONNECTED,
+        stage=LOGISTICS,
+        task_name="cold_email.workers.logistics.logistics_task",
+    )
+    return {"status": "failed", "error": ERR_GMAIL_DISCONNECTED}
 
-    message_id = send_draft(creds, row.gmail_draft_id)
+message_id = send_draft(creds, row.gmail_draft_id)
 ```
 
 Add `ERR_GMAIL_DISCONNECTED = "Gmail not connected for this user"` to

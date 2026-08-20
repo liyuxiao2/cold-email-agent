@@ -154,13 +154,13 @@ complete an authorization the attacker initiated.
 New settings in `config.py`:
 
 ```python
-session_secret: str = ""            # HS256 signing key
-encryption_key: str = ""            # Fernet key (44-char urlsafe base64)
-google_redirect_uri: str = ""       # must exactly match the console entry
+session_secret: str = ""  # HS256 signing key
+encryption_key: str = ""  # Fernet key (44-char urlsafe base64)
+google_redirect_uri: str = ""  # must exactly match the console entry
 frontend_url: str = "http://localhost:3000"
-admin_email: str = ""               # seeded as role='admin' on boot
-cookie_secure: bool = True          # False only for local http
-cors_origins: list[str] = [         # CHANGED: no longer ["*"]
+admin_email: str = ""  # seeded as role='admin' on boot
+cookie_secure: bool = True  # False only for local http
+cors_origins: list[str] = [  # CHANGED: no longer ["*"]
     "http://localhost:3000",
 ]
 ```

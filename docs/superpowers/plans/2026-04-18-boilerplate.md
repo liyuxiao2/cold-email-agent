@@ -899,6 +899,7 @@ async def approve_lead(
         lead.status = "approved"
         await session.commit()
         from cold_email.workers.logistics import logistics_task
+
         logistics_task.delay(lead_id)
     return RedirectResponse(url="/", status_code=303)
 
@@ -928,6 +929,7 @@ async def regenerate_lead(
         lead.status = "researched"
         await session.commit()
         from cold_email.workers.drafting import drafting_task
+
         drafting_task.delay(lead_id)
     return RedirectResponse(url="/", status_code=303)
 ```

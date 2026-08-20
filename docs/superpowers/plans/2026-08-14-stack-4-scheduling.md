@@ -211,6 +211,7 @@ def _local(slot: datetime) -> datetime:
 
 # ------------------------------------------------------------------ basic slots
 
+
 def test_first_slot_opens_the_window():
     # Friday 2026-08-14, 06:00 local — before the window.
     now = datetime(2026, 8, 14, 6, 0, tzinfo=TORONTO).astimezone(UTC)
@@ -245,7 +246,7 @@ def test_day_rolls_over_once_max_per_day_is_reached():
         scheduled.append(next_slot(WEEKDAYS_9_TO_5, scheduled, now))
 
     fifth = _local(next_slot(WEEKDAYS_9_TO_5, scheduled, now))
-    assert fifth.date() == datetime(2026, 8, 17).date()   # Monday, skipping the weekend
+    assert fifth.date() == datetime(2026, 8, 17).date()  # Monday, skipping the weekend
     assert (fifth.hour, fifth.minute) == (9, 0)
 
 
@@ -253,7 +254,7 @@ def test_non_cadence_days_are_skipped():
     # Saturday 2026-08-15.
     now = datetime(2026, 8, 15, 10, 0, tzinfo=TORONTO).astimezone(UTC)
     slot = _local(next_slot(WEEKDAYS_9_TO_5, [], now))
-    assert slot.weekday() == 0                            # Monday
+    assert slot.weekday() == 0  # Monday
     assert slot.date() == datetime(2026, 8, 17).date()
 
 
@@ -274,11 +275,17 @@ def test_slots_strictly_increase_across_many_days():
 
 # ------------------------------------------------------------------------- DST
 
+
 def test_spring_forward_produces_valid_increasing_instants():
     """2026-03-08: America/Toronto skips 02:00-03:00 local. A window spanning it
     must still yield valid, ordered UTC instants."""
-    cadence = {**WEEKDAYS_9_TO_5, "window_start": "01:00", "window_end": "05:00",
-               "days": [0, 1, 2, 3, 4, 5, 6], "max_per_day": 4}
+    cadence = {
+        **WEEKDAYS_9_TO_5,
+        "window_start": "01:00",
+        "window_end": "05:00",
+        "days": [0, 1, 2, 3, 4, 5, 6],
+        "max_per_day": 4,
+    }
     now = datetime(2026, 3, 8, 0, 0, tzinfo=TORONTO).astimezone(UTC)
 
     scheduled = []
@@ -289,14 +296,19 @@ def test_spring_forward_produces_valid_increasing_instants():
     assert len(set(scheduled)) == 4
     for slot in scheduled:
         assert slot.tzinfo is UTC
-        _local(slot)   # must not raise
+        _local(slot)  # must not raise
 
 
 def test_fall_back_produces_no_duplicate_utc_slots():
     """2026-11-01: 01:00-02:00 local happens twice. Two distinct UTC instants
     map to the same local time, so naive local arithmetic would emit duplicates."""
-    cadence = {**WEEKDAYS_9_TO_5, "window_start": "00:30", "window_end": "04:00",
-               "days": [0, 1, 2, 3, 4, 5, 6], "max_per_day": 4}
+    cadence = {
+        **WEEKDAYS_9_TO_5,
+        "window_start": "00:30",
+        "window_end": "04:00",
+        "days": [0, 1, 2, 3, 4, 5, 6],
+        "max_per_day": 4,
+    }
     now = datetime(2026, 11, 1, 0, 0, tzinfo=TORONTO).astimezone(UTC)
 
     scheduled = []
@@ -317,11 +329,17 @@ def test_a_non_utc_cadence_converts_back_to_the_intended_local_time():
 
 # --------------------------------------------------------------- unsatisfiable
 
+
 def test_pathological_cadence_with_a_large_backlog_raises():
     """max_per_day=1 on Sundays only, with 200 approved: failing loudly beats
     silently scheduling a send for 2028."""
-    cadence = {"max_per_day": 1, "days": [6], "window_start": "09:00",
-               "window_end": "10:00", "timezone": "America/Toronto"}
+    cadence = {
+        "max_per_day": 1,
+        "days": [6],
+        "window_start": "09:00",
+        "window_end": "10:00",
+        "timezone": "America/Toronto",
+    }
     now = datetime(2026, 8, 14, 6, 0, tzinfo=TORONTO).astimezone(UTC)
 
     scheduled = [now + timedelta(days=7 * i) for i in range(200)]
@@ -330,6 +348,7 @@ def test_pathological_cadence_with_a_large_backlog_raises():
 
 
 # ----------------------------------------------------------------- validation
+
 
 @pytest.mark.parametrize(
     "override",
@@ -390,7 +409,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 logger = logging.getLogger(__name__)
 
 HORIZON_DAYS = 90
-MAX_PER_DAY_CEILING = 50   # deliverability guardrail; consumer Gmail caps ~500/day
+MAX_PER_DAY_CEILING = 50  # deliverability guardrail; consumer Gmail caps ~500/day
 
 
 class CadenceInvalid(ValueError):
@@ -421,8 +440,10 @@ def validate_cadence(cadence: dict) -> dict:
         raise CadenceInvalid(f"max_per_day must be 1-{MAX_PER_DAY_CEILING}")
 
     days = cadence.get("days")
-    if not isinstance(days, list) or not days or not all(
-        isinstance(d, int) and 0 <= d <= 6 for d in days
+    if (
+        not isinstance(days, list)
+        or not days
+        or not all(isinstance(d, int) and 0 <= d <= 6 for d in days)
     ):
         raise CadenceInvalid("days must be a non-empty list of integers 0-6 (Mon-Sun)")
 
@@ -452,9 +473,7 @@ def _slot_offsets(start: time, end: time, count: int) -> list[timedelta]:
     burst this exists to prevent. With 09:00-17:00 and max_per_day=10, slots land
     every 48 minutes.
     """
-    span = (
-        datetime.combine(datetime.min, end) - datetime.combine(datetime.min, start)
-    )
+    span = datetime.combine(datetime.min, end) - datetime.combine(datetime.min, start)
     step = span / count
     return [step * index for index in range(count)]
 
@@ -805,14 +824,18 @@ def reap_stuck_sends() -> dict:
     double-send happens. A human verifies the mailbox, then retries via the DLQ.
     """
     with get_sync_session() as session:
-        stuck = session.execute(
-            text("""
+        stuck = (
+            session.execute(
+                text("""
                 SELECT id FROM outreach
                 WHERE status = 'sending'
                   AND updated_at < now() - make_interval(mins => :mins)
             """),
-            {"mins": STUCK_SENDING_MINUTES},
-        ).scalars().all()
+                {"mins": STUCK_SENDING_MINUTES},
+            )
+            .scalars()
+            .all()
+        )
 
     for outreach_id in stuck:
         fail_outreach(
@@ -838,9 +861,7 @@ def logistics_task(self, outreach_id: str) -> dict:
         # The second guard. Celery may deliver a task more than once; without
         # this re-check, a duplicate delivery would send the email twice.
         if outreach.status != OUTREACH_SENDING:
-            logger.info(
-                f"Outreach {outreach_id} is {outreach.status}, not sending; skipping"
-            )
+            logger.info(f"Outreach {outreach_id} is {outreach.status}, not sending; skipping")
             return {"status": "skipped", "reason": "not_claimed"}
 
         user = session.get(User, outreach.user_id)
@@ -852,8 +873,10 @@ def logistics_task(self, outreach_id: str) -> dict:
         # The user can delete the draft by hand in Gmail between approving and
         # the scheduled send. Terminal for this row, never for the scan.
         fail_outreach(
-            outreach_id, f"{ERR_SEND_FAILED}: {exc}",
-            stage=LOGISTICS, task_name="cold_email.workers.logistics.logistics_task",
+            outreach_id,
+            f"{ERR_SEND_FAILED}: {exc}",
+            stage=LOGISTICS,
+            task_name="cold_email.workers.logistics.logistics_task",
         )
         return {"status": "failed", "error": str(exc)}
 
@@ -893,11 +916,11 @@ In `cold_email/celery_app.py`:
 ⚠️ Add this comment above the `timezone` setting in the same file:
 
 ```python
-    # Governs BEAT's cron interpretation only. The due-send scanner compares
-    # timestamps with datetime.now(timezone.utc) explicitly — relying on this
-    # process default is how a scheduler ends up five hours off in production
-    # and correct on a laptop.
-    timezone="America/Toronto",
+# Governs BEAT's cron interpretation only. The due-send scanner compares
+# timestamps with datetime.now(timezone.utc) explicitly — relying on this
+# process default is how a scheduler ends up five hours off in production
+# and correct on a laptop.
+timezone = ("America/Toronto",)
 ```
 
 - [ ] **Step 6: Run it to verify it passes**
@@ -965,11 +988,9 @@ async def test_explicit_datetime_is_stored(user_client, drafted_outreach, async_
 async def test_send_now_overrides_the_cadence(
     user_client, drafted_outreach, async_session, with_cadence
 ):
-    await user_client.post(
-        f"/api/outreach/{drafted_outreach.id}/approve", json={"send_now": True}
-    )
+    await user_client.post(f"/api/outreach/{drafted_outreach.id}/approve", json={"send_now": True})
     await async_session.refresh(drafted_outreach)
-    assert drafted_outreach.scheduled_send_at is None   # NULL = next tick
+    assert drafted_outreach.scheduled_send_at is None  # NULL = next tick
 
 
 @pytest.mark.asyncio
@@ -1024,7 +1045,7 @@ async def test_bulk_approve_spreads_slots_across_the_batch(
         await async_session.refresh(outreach)
 
     slots = sorted(o.scheduled_send_at for o in three_drafted_outreach)
-    assert len(set(slots)) == 3          # all distinct
+    assert len(set(slots)) == 3  # all distinct
     assert slots == sorted(slots)
 
 
@@ -1052,8 +1073,11 @@ async def test_unsatisfiable_cadence_is_409(
         await async_session.execute(select(User).where(User.email == "user@example.com"))
     ).scalar_one()
     user.send_cadence = {
-        "max_per_day": 1, "days": [6], "window_start": "09:00",
-        "window_end": "10:00", "timezone": "America/Toronto",
+        "max_per_day": 1,
+        "days": [6],
+        "window_start": "09:00",
+        "window_end": "10:00",
+        "timezone": "America/Toronto",
     }
     await async_session.commit()
 
@@ -1107,9 +1131,7 @@ async def test_cadence_crud(user_client):
 
 
 @pytest.mark.asyncio
-async def test_scheduled_queue_returns_only_the_callers_rows(
-    user_client, other_user_scheduled
-):
+async def test_scheduled_queue_returns_only_the_callers_rows(user_client, other_user_scheduled):
     body = (await user_client.get("/api/outreach/scheduled")).json()
     assert body["items"] == []
 
@@ -1184,7 +1206,9 @@ async def _resolve_send_time(
                     Outreach.scheduled_send_at.isnot(None),
                 )
             )
-        ).scalars().all()
+        )
+        .scalars()
+        .all()
     )
 
     slots: list[datetime | None] = []
@@ -1193,7 +1217,7 @@ async def _resolve_send_time(
         for _ in range(count):
             slot = next_slot(user.send_cadence, existing, now)
             slots.append(slot)
-            existing.append(slot)   # so the next iteration sees it as taken
+            existing.append(slot)  # so the next iteration sees it as taken
     except CadenceUnsatisfiable as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
@@ -1246,14 +1270,18 @@ async def bulk_approve(
     making cadence useless at exactly the volume that makes it necessary.
     """
     rows = (
-        await session.execute(
-            select(Outreach).where(
-                Outreach.id.in_(payload.outreach_ids),
-                Outreach.user_id == user.id,
-                Outreach.status == OUTREACH_DRAFTED,
+        (
+            await session.execute(
+                select(Outreach).where(
+                    Outreach.id.in_(payload.outreach_ids),
+                    Outreach.user_id == user.id,
+                    Outreach.status == OUTREACH_DRAFTED,
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
     slots = await _resolve_send_time(
         session,
