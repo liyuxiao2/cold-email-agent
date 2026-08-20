@@ -20,13 +20,27 @@ RESUME_PROFILE_SYSTEM = (
     "'Label: achievement' where Label is the company or project name. Preserve "
     "concrete numbers verbatim. Never fabricate an achievement or change a "
     "figure.\n"
-    "- `company_links`: a URL for a Label ONLY if the résumé literally contains "
-    "one. Omit otherwise — a missing link degrades to a plain bold label, but a "
-    "wrong link is sent to a stranger.\n"
+    "- `company_links`: a list of {label, url} pairs, where `label` matches an "
+    "experience_pool Label. Include a pair ONLY if the résumé literally contains "
+    "that URL. Omit otherwise — a missing link degrades to a plain bold label, but "
+    "a wrong link is sent to a stranger.\n"
     "- `linkedin`, `github`, `website`: only if present in the résumé. Null "
     "otherwise.\n"
     "- Extract, never invent. If something is absent, return null."
 )
+
+
+# A list of pairs rather than dict[str, str]: Pydantic renders an open-ended map
+# as `additionalProperties`, which the Gemini Developer API rejects outright
+# ("additionalProperties is only supported in Gemini Enterprise Agent Platform
+# mode"), which failed every résumé upload with a 503. suggest_profile folds this
+# back into the {label: url} dict the profile actually stores. Kept terse because
+# a class docstring is sent to the model as the schema description.
+class CompanyLink(BaseModel):
+    """One Label -> URL pair."""
+
+    label: str = Field(description="The experience_pool Label this URL belongs to")
+    url: str = Field(description="The URL exactly as it appears in the résumé")
 
 
 class ResumeProfile(BaseModel):
@@ -40,8 +54,8 @@ class ResumeProfile(BaseModel):
     experience_pool: list[str] = Field(
         description="4-8 'Label: achievement' strings; the ': ' separator is required"
     )
-    company_links: dict[str, str] = Field(
-        default_factory=dict, description="Label -> URL, only for URLs in the résumé"
+    company_links: list[CompanyLink] = Field(
+        default_factory=list, description="Label/URL pairs, only for URLs in the résumé"
     )
 
 

@@ -108,3 +108,65 @@ def test_short_text_is_rejected_before_calling_the_llm(monkeypatch):
     with pytest.raises(ResumeUnreadable):
         suggest_profile("too short")
     assert called is False
+
+
+# ------------------------------------------------- Gemini schema compatibility
+
+
+def _schema_keys(node):
+    if isinstance(node, dict):
+        for key, value in node.items():
+            yield key
+            yield from _schema_keys(value)
+    elif isinstance(node, list):
+        for item in node:
+            yield from _schema_keys(item)
+
+
+def test_resume_profile_schema_has_no_additional_properties():
+    """The Gemini Developer API rejects `additionalProperties` outright, so any
+    open-ended map on this model fails every résumé upload with a 503. A
+    dict[str, str] field is the easy way to reintroduce it."""
+    from cold_email.prompts.resume_profile import ResumeProfile
+
+    offenders = [
+        k for k in _schema_keys(ResumeProfile.model_json_schema()) if k == "additionalProperties"
+    ]
+    assert offenders == []
+
+
+def test_links_to_dict_accepts_the_schema_bound_list():
+    from cold_email.profile_extract import _links_to_dict
+
+    assert _links_to_dict(
+        [
+            {"label": "Acme", "url": "https://acme.com"},
+            {"label": "Globex", "url": "https://globex.com"},
+        ]
+    ) == {"Acme": "https://acme.com", "Globex": "https://globex.com"}
+
+
+def test_links_to_dict_still_accepts_a_bare_map():
+    """Groq gets the schema injected into its prompt rather than bound, so it can
+    answer with the map shape regardless of what ResumeProfile declares."""
+    from cold_email.profile_extract import _links_to_dict
+
+    assert _links_to_dict({"Acme": "https://acme.com"}) == {"Acme": "https://acme.com"}
+
+
+def test_links_to_dict_drops_half_links_and_junk():
+    """A label with no URL would render a bold label pointing nowhere."""
+    from cold_email.profile_extract import _links_to_dict
+
+    assert (
+        _links_to_dict(
+            [
+                {"label": "Acme"},
+                {"url": "https://x.com"},
+                "nonsense",
+                {"label": "", "url": "https://y.com"},
+            ]
+        )
+        == {}
+    )
+    assert _links_to_dict(None) == {}

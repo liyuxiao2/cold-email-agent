@@ -63,6 +63,32 @@ def extract_text(pdf_bytes: bytes) -> str:
     return text
 
 
+def _links_to_dict(raw) -> dict[str, str]:
+    """Fold the model's company_links into the {label: url} dict the profile stores.
+
+    Accepts both shapes on purpose. Gemini is schema-bound and returns the
+    [{label, url}] list ResumeProfile declares, but Groq has no schema binding —
+    it gets the JSON schema injected into its system prompt — so it can still
+    answer with a bare {label: url} object. Entries missing either half are
+    dropped rather than stored as a half-link that renders a bold label
+    pointing nowhere.
+    """
+    if isinstance(raw, dict):
+        return {
+            k: v for k, v in raw.items() if isinstance(k, str) and isinstance(v, str) and k and v
+        }
+    if not isinstance(raw, list):
+        return {}
+    links: dict[str, str] = {}
+    for entry in raw:
+        if not isinstance(entry, dict):
+            continue
+        label, url = entry.get("label"), entry.get("url")
+        if isinstance(label, str) and isinstance(url, str) and label and url:
+            links[label] = url
+    return links
+
+
 def suggest_profile(resume_text: str) -> dict:
     """Ask the LLM for a suggested profile. Provider fallback is inside generate_json."""
     if len(resume_text) < MIN_EXTRACTED_CHARS:
@@ -82,4 +108,5 @@ def suggest_profile(resume_text: str) -> dict:
     suggestion["experience_pool"] = [
         bullet for bullet in suggestion.get("experience_pool", []) if ": " in bullet
     ]
+    suggestion["company_links"] = _links_to_dict(suggestion.get("company_links"))
     return suggestion
