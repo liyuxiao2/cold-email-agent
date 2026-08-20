@@ -180,12 +180,12 @@ SELECT
     CASE
         WHEN status IN ('researched', 'drafted', 'approved', 'sent', 'rejected')
             THEN 'researched'
-        WHEN status = 'failed' AND founder_email IS NULL THEN 'failed'
-        WHEN status = 'failed' AND founder_email IS NOT NULL THEN 'researched'
+        WHEN status = 'failed' AND NULLIF(founder_email, '') IS NULL THEN 'failed'
+        WHEN status = 'failed' AND NULLIF(founder_email, '') IS NOT NULL THEN 'researched'
         ELSE 'found'
     END,
     CASE
-        WHEN status = 'failed' AND founder_email IS NULL THEN error_msg
+        WHEN status = 'failed' AND NULLIF(founder_email, '') IS NULL THEN error_msg
         ELSE NULL
     END,
     created_at, updated_at
@@ -196,6 +196,14 @@ FROM leads;
 --    persisted, and 25 is the floor these addresses demonstrably cleared.
 --    The surname is only taken when the stored name actually has a second
 --    word: never fabricate a surname that isn't there.
+--
+--    NULLIF(founder_email, ''), not a plain IS NOT NULL: a lead that never
+--    resolved an address stores '' as often as NULL, and '' passes IS NOT
+--    NULL. A blank email inserted here becomes an eligible founder contact
+--    the pool will hand out, and (in the research_status CASE above) makes a
+--    company whose research failed look successfully researched while its
+--    error_msg is discarded. Every founder_email test below therefore covers
+--    both spellings of "no email".
 INSERT INTO company_contacts (
     company_id, email, first_name, last_name, is_founder, eligible, confidence
 )
@@ -217,7 +225,7 @@ SELECT
     true,
     25
 FROM leads
-WHERE founder_email IS NOT NULL;
+WHERE NULLIF(founder_email, '') IS NOT NULL;
 
 -- 3. research: pure rename, IDs already match.
 --    First drop the old FK to `leads`. A rename does not follow it, so it would
