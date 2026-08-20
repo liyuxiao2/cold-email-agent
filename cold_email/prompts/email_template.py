@@ -2,8 +2,8 @@
 
 The email body is NOT freeform-written by the LLM. This template is the single
 source of structure/tone; the LLM only produces the values for the contextual
-tokens ({{company_interest}}, {{admiration_detail}}, {{experience_bullets}}),
-while the sender/link tokens are filled deterministically.
+tokens ({{why_company}}, {{experience_bullets}}), while the sender/link tokens
+are filled deterministically.
 
 Tokens use {{double-brace}} syntax specifically so they never collide with the
 markdown link syntax [label](url) that the rendered links use. fill_template
@@ -20,9 +20,7 @@ Hi {{first_name}},
 
 I know your time is valuable so I'll keep it short. {{intro}}
 
-I'm particularly interested in {{company_interest}}, and am impressed by the \
-technical depth of your engineering team. I'm {{admiration_detail}} \
-and wanted to see if there might be a fit for me to contribute in any capacity.
+{{why_company}}
 
 **Recent Experience:**
 
@@ -43,7 +41,7 @@ def fill_template(template: str, values: dict[str, str]) -> str:
     """Replace every {{token}} in `template` with values[token].
 
     Fails loudly (ValueError) on a token with no matching value — the safest
-    choice for outreach, so a literal "{{company_interest}}" never ships.
+    choice for outreach, so a literal "{{why_company}}" never ships.
     """
 
     def repl(m: re.Match[str]) -> str:

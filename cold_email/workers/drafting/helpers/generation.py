@@ -26,7 +26,7 @@ from cold_email.workers.shared.views import PendingDraft
 logger = logging.getLogger(__name__)
 
 # Context fields required to assemble a complete email; missing any → terminal.
-_REQUIRED = ("subject", "company_interest", "admiration_detail", "intro", "tailored_bullets")
+_REQUIRED = ("subject", "why_company", "intro", "tailored_bullets")
 
 
 def draft_email(
@@ -117,8 +117,7 @@ def assemble_email(context: dict, row: PendingDraft, profile: SenderProfile) -> 
     values = {
         "first_name": first_name,
         "intro": context["intro"],
-        "company_interest": context["company_interest"],
-        "admiration_detail": context["admiration_detail"],
+        "why_company": context["why_company"],
         "experience_bullets": bullets,
         "sender_first_name": profile.first_name,
         "github_link": f"[GitHub]({profile.github})",

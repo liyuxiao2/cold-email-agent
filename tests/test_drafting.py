@@ -642,8 +642,7 @@ async def test_byok_users_credentials_reach_the_llm(
         "cold_email.workers.drafting.helpers.generation.generate_json",
         lambda **kw: (
             captured.update(kw)
-            or '{"subject":"s","company_interest":"c",'
-            '"admiration_detail":"a","intro":"i","tailored_bullets":["A: b"]}'
+            or '{"subject":"s","why_company":"c","intro":"i","tailored_bullets":["A: b"]}'
         ),
     )
     monkeypatch.setattr(

@@ -2,35 +2,71 @@
 
 The model does NOT write the whole email — the template (email_template.py) owns
 structure and tone. The model returns only the *contextual* pieces via the
-EmailDraftContext schema: the subject, the two company-specific interest phrases,
+EmailDraftContext schema: the subject, a company-specific why_company paragraph,
 a tailored introduction sentence, and a selection of experience bullets extracted
 from the resume. Everything else is filled deterministically.
 """
 
 from pydantic import BaseModel, Field
 
+WHY_COMPANY_EXAMPLES = (
+    "Good Examples:\n"
+    "  * 'I\\'ve been following your development of a universal API that simplifies access to critical GPS, safety, "
+    "and dash cam data from 100+ telematics integrations for commercial trucking. I\\'m really drawn to the high-ownership "
+    "culture you\\'ve built, and wanted to see if there might be a fit for me to contribute to the team.'\n"
+    "  * 'I\\'ve been using [Product] for a while now and love what you guys are doing. Personally, "
+    "your product was the reason I found my first internship (it\\'s how I sourced 80% of my contacts), "
+    "and I\\'d love the chance to contribute to your mission and learn from the team.'\n"
+    "  * 'Congrats on the recent seed round! Seeing how [Company] leverages AI-native solutions to drive "
+    "measurable outcomes is incredibly exciting, and I wanted to see if there might "
+    "be a fit for me to contribute to the engineering team.'"
+)
+
+SUBJECT_EXAMPLES = (
+    "Good Examples:\n"
+    "  * 'Engineering / [Company]'\n"
+    "  * '[Current Company] / [Company]'\n"
+    "  * '[Your University] CS / [Company]'"
+)
+
+INTRO_EXAMPLES = (
+    "Good Examples:\n"
+    "  * 'My name is [Your Name], a Computer Science student at [Your University] currently interning at [Current Company] and previously at [Previous Company].'\n"
+    "  * 'I’m [Your Name], a second-year computer science student based in [Your Location], currently interning at [Current Company] as a software engineer.'\n"
+    "  * 'My name is [Your Name]; I\\'m a CS student at [Your University] with software engineering experience at [Previous Company] and [Current Company].'"
+)
+
+TAILORED_BULLETS_EXAMPLES = (
+    "Good Examples:\n"
+    "  * '[Current Company]: Architected a Ruby adapter and led development of a key engine for 3M+ clients, relevant to [Company]\\'s platform'\n"
+    "  * '[Previous Company]: Built backend infrastructure for 25,000+ users, cutting database cluster calls by 66%'\n"
+    "  * '[Current Company]: Supported the core transaction system processing transactions for over 3 million users'"
+)
+
 EMAIL_DRAFT_SYSTEM = (
     "You fill the contextual slots of a fixed candidate-outreach email a software "
     "engineer sends to a startup founder. You do NOT write the whole email — only "
     "the fields requested.\n\n"
     "Rules:\n"
-    "- `company_interest`: complete the sentence 'I'm particularly interested in ...' "
-    "with a specific aspect of what THIS company builds (e.g. 'how Turo handles "
-    "car-sharing marketplace technology'). Use only the provided research; never "
-    "invent products or facts.\n"
-    "- `admiration_detail`: complete 'I'm drawn to ...' with a concrete, non-generic "
-    "detail (a technical bet, culture, or recent milestone). No flattery that could "
-    "apply to any company.\n"
-    "- `intro`: write a tailored first-person introduction sentence (e.g., 'My name is Liyu, a CS student at McMaster...') "
-    "that highlights relevant aspects of your background (from the resume) that align with "
-    "the company's domain, tech stack, or challenges. Keep it to exactly one sentence, professional, "
-    "and natural-sounding.\n"
+    "- `why_company`: write a brief, natural 2-3 sentence paragraph explaining why you are reaching out to "
+    "this specific company. Avoid repetitive or formulaic phrasing (do NOT use 'I'm particularly interested in' "
+    "and 'I'm drawn to' together, as it sounds robotic). Instead, make it flow naturally. You can congratulate them "
+    "on recent news/funding, reference a specific project or tech stack, or explain why their mission/problem is "
+    "compelling to you, and close the paragraph with a transition to seeing if there might be a fit to contribute "
+    "to the team.\n"
+    f"  {WHY_COMPANY_EXAMPLES}\n"
+    "- `intro`: write a tailored first-person introduction sentence that highlights relevant "
+    "aspects of your background (from the resume) that align with the company's domain, tech stack, or challenges. "
+    "Keep it to exactly one sentence, professional, and natural-sounding.\n"
+    f"  {INTRO_EXAMPLES}\n"
     "- `tailored_bullets`: choose or generate the 3 experience bullets from the provided resume that "
     "are MOST relevant to this company, ordered most-relevant first. Return each as a "
-    "'Label: achievement' string (where Label is the company/project name, e.g., 'Wealthsimple: Developed a financial hold...'). "
+    "'Label: achievement' string (where Label is the company/project name, e.g., '[Current Company]: Developed a financial hold...'). "
     "You may lightly rephrase/tailor them for relevance, but never fabricate achievements or change the numbers/facts.\n"
+    f"  {TAILORED_BULLETS_EXAMPLES}\n"
     "- `subject`: a short, specific subject line referencing the company by name. No "
     "clickbait, no 'opportunity'.\n"
+    f"  {SUBJECT_EXAMPLES}\n"
     "- Specific over generic throughout."
 )
 
@@ -39,8 +75,9 @@ class EmailDraftContext(BaseModel):
     """Contextual slots the LLM fills; the template supplies everything else."""
 
     subject: str = Field(description="Short, company-specific subject line")
-    company_interest: str = Field(description="Completes 'I'm particularly interested in ...'")
-    admiration_detail: str = Field(description="Completes 'I'm drawn to ...'")
+    why_company: str = Field(
+        description="A 2-3 sentence paragraph detailing why you are interested in the company (referencing their tech, projects, news, or mission) and wanting to explore a fit to contribute."
+    )
     intro: str = Field(
         description="A tailored, professional first-person introduction sentence based on the resume and company context"
     )

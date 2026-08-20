@@ -45,8 +45,11 @@ def _row(founder_name="Kenny Chan"):
 def _context():
     return {
         "subject": "Interested in Turo",
-        "company_interest": "how Turo handles car-sharing marketplace technology",
-        "admiration_detail": "the high-ownership culture you've built",
+        "why_company": (
+            "I've been following how Turo handles car-sharing marketplace technology. "
+            "I'm drawn to the high-ownership culture you've built, and wanted to see if "
+            "there might be a fit for me to contribute."
+        ),
         "intro": "My name is Liyu, a CS student at McMaster.",
         "tailored_bullets": [
             "Wealthsimple: led an RESP engine for 3M+ clients",
@@ -81,7 +84,7 @@ def test_assemble_produces_subject_body_and_html():
 
 def test_assemble_returns_empty_when_context_incomplete():
     ctx = _context()
-    del ctx["company_interest"]
+    del ctx["why_company"]
     assert assemble_email(ctx, _row(), PROFILE) == {}
 
 
@@ -113,8 +116,7 @@ def test_greeting_uses_the_contact_not_the_founder(profile):
     )
     context = {
         "subject": "Acme",
-        "company_interest": "x",
-        "admiration_detail": "y",
+        "why_company": "x",
         "intro": "I'm someone.",
         "tailored_bullets": ["A: did a thing"],
     }
@@ -146,8 +148,7 @@ def test_greeting_falls_back_when_the_contact_has_no_first_name(profile):
     )
     context = {
         "subject": "Acme",
-        "company_interest": "x",
-        "admiration_detail": "y",
+        "why_company": "x",
         "intro": "I'm someone.",
         "tailored_bullets": ["A: did a thing"],
     }
