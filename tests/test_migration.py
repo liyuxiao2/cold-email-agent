@@ -212,7 +212,18 @@ async def legacy_fixture(legacy_session, admin_user_id):
           ('88888888-8888-8888-8888-888888888888', 'ApprovedCo', 'Gia Bell',  'gia@approved.co',
            'https://approved.co', 'approved'),
           ('99999999-9999-9999-9999-999999999999', 'RejectedCo', 'Hal Fox',   'hal@rejected.co',
-           'https://rejected.co', 'rejected')
+           'https://rejected.co', 'rejected'),
+          -- '' rather than NULL: research that never resolved an address wrote
+          -- an empty string as often as a NULL, and '' passes IS NOT NULL. The
+          -- production database that ran this migration was 207/252 this shape.
+          ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'BlankEmailCo', 'Ivy Nash', '',
+           'https://blankemail.co', 'failed')
+        """)
+    )
+    await legacy_session.execute(
+        text("""
+        UPDATE leads SET error_msg = 'no usable email found'
+        WHERE id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
         """)
     )
     # RejectedCo's error_msg is a REVIEWER NOTE, not a failure message: the old
@@ -539,7 +550,7 @@ async def test_legacy_table_retains_every_row(legacy_fixture, legacy_session):
     await _run_migration(legacy_session)
     assert (
         await legacy_session.execute(text("SELECT COUNT(*) FROM leads_legacy"))
-    ).scalar_one() == 9
+    ).scalar_one() == 10
 
 
 @pytest.mark.asyncio
@@ -656,7 +667,7 @@ async def test_adopts_tables_a_create_all_boot_already_made(legacy_fixture, lega
 
     await _run_migration(legacy_session)
 
-    assert (await legacy_session.execute(text("SELECT COUNT(*) FROM companies"))).scalar_one() == 9
+    assert (await legacy_session.execute(text("SELECT COUNT(*) FROM companies"))).scalar_one() == 10
 
 
 @pytest.mark.asyncio
@@ -681,3 +692,42 @@ async def test_create_all_and_the_migration_agree_on_indexes_and_constraints(
 
     assert from_create_all["indexes"] == from_migration["indexes"]
     assert from_create_all["constraints"] == from_migration["constraints"]
+
+
+@pytest.mark.asyncio
+async def test_blank_founder_email_creates_no_contact(legacy_fixture, legacy_session):
+    """'' is not an address. Inserted as a contact it would be marked eligible
+    and handed out by the pool, so a user drafts to an empty To: header."""
+    await _run_migration(legacy_session)
+    assert (
+        await legacy_session.execute(
+            text("""
+            SELECT COUNT(*) FROM company_contacts ct
+            JOIN companies c ON c.id = ct.company_id
+            WHERE c.company_name = 'BlankEmailCo'
+            """)
+        )
+    ).scalar_one() == 0
+    # And no contact anywhere carries a blank address.
+    assert (
+        await legacy_session.execute(text("SELECT COUNT(*) FROM company_contacts WHERE email = ''"))
+    ).scalar_one() == 0
+
+
+@pytest.mark.asyncio
+async def test_blank_founder_email_is_a_failed_company_keeping_its_error(
+    legacy_fixture, legacy_session
+):
+    """Research that failed without an address must stay 'failed' and keep its
+    error_msg, exactly as the NULL case does."""
+    await _run_migration(legacy_session)
+    row = (
+        await legacy_session.execute(
+            text("""
+            SELECT research_status, error_msg FROM companies
+            WHERE company_name = 'BlankEmailCo'
+            """)
+        )
+    ).one()
+    assert row.research_status == "failed"
+    assert row.error_msg == "no usable email found"
