@@ -26,6 +26,16 @@ def _contact(**overrides) -> HunterContact:
     return HunterContact(**{**base, **overrides})
 
 
+@pytest.fixture(autouse=True)
+def _hunter_key(monkeypatch):
+    """find_contacts returns [] when no key is configured, so without this the
+    tests below pass without ever reaching the mocked call."""
+    monkeypatch.setattr(
+        "cold_email.workers.research.helpers.contact_finder.settings.hunter_api_key",
+        "test-key",
+    )
+
+
 # ---------------------------------------------------------------- eligibility
 
 
@@ -175,11 +185,15 @@ def test_find_contacts_returns_empty_on_network_error(monkeypatch):
     result rather than the call raising."""
     import requests
 
+    calls = []
+
     def boom(*a, **k):
+        calls.append(1)
         raise requests.RequestException("timeout")
 
     monkeypatch.setattr("cold_email.workers.research.helpers.contact_finder.requests.get", boom)
     assert find_contacts("acme.com") == []
+    assert calls, "returned early without attempting the request"
 
 
 def test_find_contacts_without_a_domain_makes_no_call():
