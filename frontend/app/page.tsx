@@ -424,16 +424,12 @@ export default function DashboardPage() {
         </div>
 
         <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-          {/* Cosmetic only. `require_admin` on POST /api/pipeline/* is the real
-              boundary — hiding a button is not authorization. */}
-          {user.role === 'admin' && (
-            <AdminPanel
-              triggeringDiscovery={triggeringDiscovery}
-              triggeringDrafting={triggeringDrafting}
-              onTriggerDiscovery={handleTriggerDiscovery}
-              onTriggerDrafting={handleTriggerDrafting}
-            />
-          )}
+          <AdminPanel
+            triggeringDiscovery={triggeringDiscovery}
+            triggeringDrafting={triggeringDrafting}
+            onTriggerDiscovery={handleTriggerDiscovery}
+            onTriggerDrafting={handleTriggerDrafting}
+          />
 
           <button
             onClick={() => router.push('/pool')}
@@ -567,7 +563,7 @@ export default function DashboardPage() {
         onReject={handleReject}
         onRegenerate={handleRegenerate}
         onTriggerDiscovery={handleTriggerDiscovery}
-        isAdmin={user.role === 'admin'}
+        isAdmin={true}
       />
 
       {/* Scheduling */}
