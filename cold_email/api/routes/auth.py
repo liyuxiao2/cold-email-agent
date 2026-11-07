@@ -125,7 +125,7 @@ async def google_callback(
         key=SESSION_COOKIE,
         value=mint_session(user.id),
         max_age=SESSION_TTL_DAYS * 24 * 60 * 60,
-        httponly=True,  # unreadable by JavaScript, so an XSS cannot steal it
+        httponly=True,
         secure=settings.cookie_secure,
         samesite="none" if settings.cookie_secure else "lax",
         path="/",

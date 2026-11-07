@@ -81,9 +81,9 @@ _TASK_NAME = "cold_email.workers.logistics.logistics_task"
 def send_due_task() -> dict:
     """Claim and dispatch every approved outreach row that is now due.
 
-    Runs every 5 minutes (see celery_app.py). pending_sends already carries
-    the `scheduled_send_at IS NULL OR <= now()` clause (migration 006), so an
-    approval with no schedule goes out on the next tick.
+    Runs every 5 minutes (see celery_app.py). pending_sends encodes "due" as
+    `scheduled_send_at IS NULL OR <= now()`, so an unscheduled approval goes
+    out on the next tick.
     """
     claimed = claim_due_sends()
 
@@ -93,12 +93,8 @@ def send_due_task() -> dict:
             logistics_task.delay(outreach_id)
             dispatched += 1
         except Exception as exc:
-            # claim_due_sends only flipped approved -> sending; send_draft was
-            # never called for this row, so releasing it back to 'approved'
-            # is always safe -- the next tick (5 minutes away) reclaims it
-            # cleanly. Same precedent as create_outreach / regenerate
-            # wrapping drafting_task.delay() (cold_email/api/routes/
-            # outreach.py): one failed dispatch must not strand the row.
+            # send_draft was never called for this row, so releasing it back
+            # to 'approved' is safe — the next tick reclaims it cleanly.
             logger.warning(f"Could not dispatch logistics_task for {outreach_id}: {exc}")
             update_outreach_status(outreach_id, OUTREACH_APPROVED)
 

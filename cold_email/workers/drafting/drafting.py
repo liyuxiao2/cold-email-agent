@@ -10,18 +10,6 @@ celery_app.py): it finds users with STALE queued rows — evidence a dispatch
 was lost, e.g. a Redis hiccup during POST /api/outreach — and re-dispatches
 drafting_task for each. It is not the primary path.
 
-Note for readers of this stack's history: an earlier shape of this file had
-drafting_task() take NO arguments and do its own per-user grouping internally
-(reading every queued row across all tenants, bucketing by user_id). That was
-itself a fix for a worse bug — a single-context sweep drafting EVERY pending
-row with the FIRST owner's profile, résumé, and Gmail mailbox, so one user's
-contact could receive mail built from a different user's identity. This
-version preserves that per-user isolation by construction: drafting_task only
-ever touches ONE user's rows, so cross-tenant mixing is not reachable from
-here. The grouping now happens one level up, in drafting_recovery_task, for
-the same reason it always existed — a single dispatch must never load two
-users' credentials into one draft.
-
 Helpers live in sibling modules:
   - generation.py  — LLM email generation
   - db_helpers.py  — pending_drafts read, draft write

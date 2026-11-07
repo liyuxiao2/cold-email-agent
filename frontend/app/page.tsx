@@ -103,15 +103,8 @@ export default function DashboardPage() {
     }
   }, [showNotification]);
 
-  /** Renders how the send time is displayed for the toast and the scheduled
-   * queue: the cadence's own timezone if one is configured, otherwise the
-   * browser's -- always with a UTC offset alongside so a bare local time is
-   * never ambiguous. Same `timeZoneName: 'shortOffset'` approach as
-   * ScheduledQueue.tsx's formatScheduled: Intl.DateTimeFormat's `format()`
-   * silently drops any option it doesn't recognize for the given style
-   * combination, so the offset has to come from a second, explicit
-   * formatToParts() call rather than just adding the option to the call
-   * above. */
+  // `format()` silently drops timeZoneName for the style options used here, so
+  // the UTC offset must come from a separate formatToParts() call instead.
   const formatInDisplayTz = (iso: string) => {
     const timeZone = cadence?.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
     const date = new Date(iso);
@@ -138,7 +131,6 @@ export default function DashboardPage() {
     else if (!user.profile_complete) router.push('/onboarding');
   }, [authLoading, user, router]);
 
-  // Only fetch once we know there is a session; an anonymous call would 401.
   useEffect(() => {
     if (user) {
       loadData();
@@ -160,10 +152,6 @@ export default function DashboardPage() {
     });
   };
 
-  /** Common-case approve: uses the caller's cadence if one is configured,
-   * otherwise sends on the next scanner tick (<=5 min). Approve only sets
-   * state now -- send_due_task's Beat scan does the actual dispatch, so the
-   * toast reports what WILL happen, not "dispatched". */
   const handleApprove = async (lead: OutreachItem) => {
     const name = lead.company?.company_name ?? 'company';
     try {
@@ -184,9 +172,6 @@ export default function DashboardPage() {
     }
   };
 
-  /** The "Approve & schedule…" dialog's confirm. `whenIso` is null for "send
-   * now" (overrides any cadence). Returns whether it succeeded so the dialog
-   * only closes on success. */
   const handleApproveScheduled = async (lead: OutreachItem, whenIso: string | null): Promise<boolean> => {
     const name = lead.company?.company_name ?? 'company';
     try {

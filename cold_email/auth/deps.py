@@ -3,10 +3,6 @@
 One dependency expresses the whole policy:
   * get_current_user — authenticated, else 401
 
-require_admin is kept as an alias for get_current_user so existing route
-imports continue to work without change. All authenticated users have equal
-access; role-based gating has been removed.
-
 Routes never parse a JWT or read a cookie themselves, so the session format is
 free to change without touching a single route.
 """
@@ -39,5 +35,4 @@ async def get_current_user(
     return user
 
 
-# All authenticated users have equal access — require_admin is now an alias.
 require_admin = get_current_user

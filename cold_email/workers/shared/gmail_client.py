@@ -60,9 +60,8 @@ def create_draft(
 ) -> str:
     """Create a draft in the user's mailbox; return its draft ID.
 
-    `attachment` is (filename, data) rather than a path: after the multi-tenant
-    migration there is no file on disk — the bytes come from resume_store. The
-    résumé is always a PDF, so the old mimetypes.guess_type fallback is gone.
+    `attachment` is (filename, bytes) — the résumé comes from resume_store,
+    not a file on disk, so mimetypes.guess_type would add nothing.
     """
     message = EmailMessage()
     message["To"] = to

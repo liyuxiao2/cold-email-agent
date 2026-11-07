@@ -38,10 +38,8 @@ logger = logging.getLogger(__name__)
     autoretry_for=(Exception,),
     max_retries=DEFAULT_MAX_RETRIES,
     default_retry_delay=DEFAULT_RETRY_DELAY,
-    # Per-company LLM pacing now comes from the fleet-wide Redis token bucket
-    # inside generate_json (see cold_email.workers.shared.rate_limit), not a
-    # Celery rate_limit=: that argument is enforced per-worker, so it has the
-    # same defect as the time.sleep it used to sit alongside.
+    # No Celery rate_limit= here: that is enforced per-worker, not fleet-wide.
+    # Fleet-wide pacing comes from the Redis token bucket inside generate_json.
     name="cold_email.workers.research.research_task",
 )
 def research_task(self, company_id: str) -> dict:
