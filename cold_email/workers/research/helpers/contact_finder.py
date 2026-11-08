@@ -85,12 +85,11 @@ class ClassifiedContact:
 
 
 def looks_like_person_name(name: str | None) -> bool:
-    """True if `name` is a plausible single 'First Last'.
+    """True if `name` is a plausible 'First Last' — not a title or placeholder.
 
-    Kept from the Email Finder era, but its job changed: it no longer gates an
-    API call, it decides whether the LLM-extracted founder_name is trustworthy
-    enough to match against Hunter's results. Matching "the founders" against a
-    contact would flag an arbitrary person as the founder.
+    Decides whether the LLM-extracted founder_name is trustworthy enough to
+    match against Hunter's results. Matching "the founders" against a contact
+    would flag an arbitrary person as the founder.
     """
     if not name:
         return False
@@ -227,8 +226,7 @@ def classify_contacts(
 def has_eligible_contact(contacts: list[ClassifiedContact]) -> bool:
     """True if at least one contact is worth emailing.
 
-    Replaces should_accept_email as research's fail-fast gate: no eligible
-    contact means nobody can email this company, so it is dead-lettered at
-    research rather than wasting the drafting stage.
+    Research's fail-fast gate: no eligible contact means nobody can email this
+    company, so it is dead-lettered at research rather than wasting drafting.
     """
     return any(c.eligible for c in contacts)

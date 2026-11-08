@@ -21,21 +21,13 @@ interface ReviewDeckProps {
   /** outreach_id of the row whose action is in flight, or null */
   actionLoading: string | null;
   onApprove: (lead: OutreachItem) => void;
-  /** The dialog's "Schedule" / "Send now instead" confirm. `whenIso` is null
-   * for "send now" (overrides any cadence). Resolves true on success so the
-   * dialog only closes then. */
   onApproveScheduled: (lead: OutreachItem, whenIso: string | null) => Promise<boolean>;
-  /** Approves every lead currently in the queue in one call, so a cadence
-   * walk spreads them across slots instead of stacking one-at-a-time
-   * approvals on the same next-free slot -- the thing that makes cadence
-   * usable at volume. */
   onApproveAll: () => void;
   bulkApproving: boolean;
   /** Resolves true when the rejection succeeded, so the modal only closes then. */
   onReject: (outreachId: string, notes: string) => Promise<boolean>;
   onRegenerate: (lead: OutreachItem) => void;
   onTriggerDiscovery: () => void;
-  /** Gates the empty-state Run Discovery button. Cosmetic only — see below. */
   isAdmin: boolean;
 }
 
@@ -109,9 +101,6 @@ export default function ReviewDeck({
             All generated drafts have been approved or dispatched. Run discovery or drafting sweep to populate new leads.
           </p>
           <div style={{ display: 'flex', gap: '12px', justifyContent: 'center' }}>
-            {/* Cosmetic only. `require_admin` on POST /api/pipeline/discovery is
-                the real boundary — hiding a button is not authorization. Gated
-                here so a non-admin isn't offered a control that only 403s. */}
             {isAdmin && (
               <button
                 onClick={onTriggerDiscovery}
@@ -209,10 +198,6 @@ export default function ReviewDeck({
                     )}
                   </div>
 
-                  {/* Contact Info — WHICH human this email is going to. Without
-                      this a user cannot tell whether they are writing to the
-                      founder or the CTO: the visible payoff of contact
-                      spreading over a single founder_email. */}
                   <div
                     style={{
                       marginTop: '1.2rem',
@@ -261,11 +246,7 @@ export default function ReviewDeck({
                   )}
                 </div>
 
-                {/* Action Buttons */}
                 <div style={{ display: 'flex', gap: '8px', marginTop: '1.5rem' }}>
-                  {/* One click for the common case (uses the caller's cadence,
-                      or sends now if none is set); scheduling a specific
-                      instant is opt-in per email via the second button. */}
                   <button
                     onClick={() => onApprove(lead)}
                     disabled={actionLoading === lead.outreach_id}
@@ -380,9 +361,6 @@ export default function ReviewDeck({
                     </button>
                   </div>
 
-                  {/* Which human this email is going to. Without this a user
-                      cannot tell whether they are writing to the founder or
-                      the CTO — the visible payoff of contact spreading. */}
                   <div
                     className="mb-2 text-sm text-gray-600"
                     style={{ marginBottom: '0.5rem', fontSize: '0.85rem', color: 'var(--text-secondary)' }}

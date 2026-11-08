@@ -1,8 +1,7 @@
 """FastAPI dependencies — the only auth surface routes should import.
 
-Two dependencies express the whole policy:
+One dependency expresses the whole policy:
   * get_current_user — authenticated, else 401
-  * require_admin    — authenticated AND role='admin', else 403
 
 Routes never parse a JWT or read a cookie themselves, so the session format is
 free to change without touching a single route.
@@ -36,13 +35,4 @@ async def get_current_user(
     return user
 
 
-async def require_admin(user: User = Depends(get_current_user)) -> User:
-    """Resolve the caller and require the admin role, else 403.
-
-    403 rather than 401: the caller is authenticated, just not authorized.
-    Returning 401 would tell a legitimate user to log in again, which cannot fix
-    the problem.
-    """
-    if not user.is_admin:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin role required")
-    return user
+require_admin = get_current_user

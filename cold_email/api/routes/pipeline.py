@@ -74,12 +74,10 @@ async def trigger_discovery_api(admin: User = Depends(require_admin)):
 
 @router.post("/drafting")
 async def trigger_drafting_api(admin: User = Depends(require_admin)):
-    """Manually trigger the drafting recovery sweep.
+    """Manually trigger the hourly drafting recovery sweep.
 
-    Drafting itself is now dispatched per-user by POST /api/outreach right
-    after a user selects companies; this admin route triggers the same
-    safety-net sweep Beat runs hourly, for users whose queued rows have been
-    sitting long enough to look like a lost dispatch.
+    Finds users whose queued rows have been sitting long enough to look like
+    a lost dispatch and re-dispatches drafting_task for each of them.
     """
     try:
         from cold_email.workers.drafting import drafting_recovery_task

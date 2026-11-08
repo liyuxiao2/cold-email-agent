@@ -100,13 +100,11 @@ def scrape_website(company_url: str) -> str:
 
             text = soup.get_text(separator=" ", strip=True)
 
-            # Fall back to Firecrawl if the scraped text is too short
             if len(text) < MIN_SCRAPED_TEXT_LEN:
                 firecrawl_app = FirecrawlApp(api_key=settings.firecrawl_api_key)
                 firecrawl_response = firecrawl_app.scrape(company_url)
                 text = firecrawl_response.markdown or ""
 
-            # Truncate to avoid exceeding LLM context limits
             if len(text) > MAX_SCRAPED_TEXT_LEN:
                 text = text[:MAX_SCRAPED_TEXT_LEN]
 

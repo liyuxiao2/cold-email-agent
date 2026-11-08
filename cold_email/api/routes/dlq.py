@@ -126,13 +126,9 @@ async def retry_dead_letter(
             await session.delete(dl)
             research_task.delay(company_id)
         elif stage_val in ("drafting", "logistics"):
-            # Migration 006 deliberately anchors a drafting/logistics
-            # dead-letter row to company_id (not outreach_id) when it has no
-            # matching outreach row. Without this guard, str(None) == "None"
-            # and session.get(Outreach, None) returns None without raising, so
-            # the row would be deleted and e.g. logistics_task.delay("None")
-            # dispatched for an outreach row that never existed. Skip and
-            # leave the row in place instead.
+            # Guard against NULL outreach_id: str(None) == "None" and
+            # session.get(Outreach, None) returns None without raising, so
+            # the row would be silently deleted with nothing re-dispatched.
             if dl.outreach_id is None:
                 logger.warning(
                     f"DLQ row {dl.id} (stage={stage_val}) has no outreach_id "
@@ -145,10 +141,6 @@ async def retry_dead_letter(
                 outreach.error_msg = None
             await session.delete(dl)
             if stage_val == "drafting":
-                # drafting_task is now per-user, so it needs the row's owner,
-                # not just the outreach id. Only reachable when `outreach` is
-                # None (row already gone), in which case there is no user
-                # left to re-dispatch for.
                 if outreach is not None:
                     drafting_task.delay(str(outreach.user_id))
                 else:

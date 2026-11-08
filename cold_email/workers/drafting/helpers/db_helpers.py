@@ -1,9 +1,8 @@
 """Database helpers for the drafting worker.
 
 Thin, domain-specific wrappers around SQLAlchemy session ops so drafting.py
-only holds Celery orchestration. Reads come from the pending_drafts view
-(see migrations/006 + migrations/views.sql); writes go to the drafts table +
-outreach.status.
+only holds Celery orchestration. Reads come from the pending_drafts view;
+writes go to the drafts table + outreach.status.
 """
 
 import logging

@@ -80,7 +80,6 @@ def save_companies_to_db(companies: list[dict]) -> list[str]:
 
 
 def send_to_research(ids: list[str]):
-    """Dispatch research_task for each new company."""
     for company_id in ids:
         research_task.delay(company_id)
 
